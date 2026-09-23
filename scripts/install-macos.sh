@@ -18,11 +18,14 @@
 # 也支持 git clone 后本地运行: sudo bash scripts/install-macos.sh server
 set -euo pipefail
 
-REPO_URL="https://github.com/zhanghaobo1987/bigcat"
-INSTALL_DIR="/usr/local/bigcat"
+REPO_URL="${BIGCAT_REPO_URL:-https://github.com/zhanghaobo1987/bigcat}"
+INSTALL_DIR="${BIGCAT_INSTALL_DIR:-/usr/local/bigcat}"
 VENV="$INSTALL_DIR/venv"
 DEFAULT_PORT=25774
 PLIST_DIR="/Library/LaunchDaemons"
+# agent 可调选项（也可用 --interval/--install-dir/--service-name/--repo-url 参数覆盖）
+AGENT_INTERVAL="${BIGCAT_INTERVAL:-2}"
+AGENT_SERVICE="${BIGCAT_SERVICE_NAME:-agent}"   # launchd 标签为 com.bigcat.<AGENT_SERVICE>
 
 MODE="${1:-}"
 shift || true
@@ -39,6 +42,10 @@ while [ $# -gt 0 ]; do
     --port)           PORT="${2:?--port 需要一个端口号}"; shift 2 ;;
     --admin-user)     ADMIN_USER="${2:?--admin-user 需要一个用户名}"; shift 2 ;;
     --admin-password) ADMIN_PASSWORD="${2:?--admin-password 需要一个密码}"; PASSWORD_GIVEN="yes"; shift 2 ;;
+    --interval)       AGENT_INTERVAL="${2:?--interval 需要一个秒数}"; shift 2 ;;
+    --install-dir)    INSTALL_DIR="${2:?--install-dir 需要一个路径}"; VENV="$INSTALL_DIR/venv"; shift 2 ;;
+    --service-name)   AGENT_SERVICE="${2:?--service-name 需要一个名称}"; shift 2 ;;
+    --repo-url)       REPO_URL="${2:?--repo-url 需要一个地址}"; shift 2 ;;
     *) if [ -z "$SERVER_URL" ]; then SERVER_URL="$1"; else TOKEN="$1"; fi; shift ;;
   esac
 done
@@ -231,9 +238,13 @@ install_agent() {
   # ---- 升级检测：已安装则复用原主控地址与 token，跳过提问 ----
   UPGRADE="no"
   is_agent_installed && UPGRADE="yes"
-  PLIST="$PLIST_DIR/com.bigcat.agent.plist"
+  AGENT_LABEL="com.bigcat.${AGENT_SERVICE}"
+  PLIST="$PLIST_DIR/$AGENT_LABEL.plist"
+  LEGACY_PLIST="$PLIST_DIR/com.bigcat.agent.plist"
   [ -z "$SERVER_URL" ] && SERVER_URL="$(plist_arg "$PLIST" --server)"
+  [ -z "$SERVER_URL" ] && SERVER_URL="$(plist_arg "$LEGACY_PLIST" --server)"
   [ -z "$TOKEN" ] && TOKEN="$(plist_arg "$PLIST" --token)"
+  [ -z "$TOKEN" ] && TOKEN="$(plist_arg "$LEGACY_PLIST" --token)"
   [ "$UPGRADE" = "yes" ] && log "检测到已安装 agent，进入升级模式：保留原有主控地址与 token，仅更新程序并重启"
 
   [ -n "$SERVER_URL" ] || SERVER_URL="$(ask_required "主控地址（例如 http://主控IP:25774）")"
@@ -256,7 +267,7 @@ install_agent() {
   cp "$src/agent/agent.py" "$INSTALL_DIR/"
   setup_venv
 
-  write_plist "com.bigcat.agent" "\
+  write_plist "$AGENT_LABEL" "\
     <string>$VENV/bin/python</string>
     <string>$INSTALL_DIR/agent.py</string>
     <string>--server</string>
@@ -264,7 +275,13 @@ install_agent() {
     <string>--token</string>
     <string>$TOKEN</string>
     <string>--interval</string>
-    <string>2</string>"
+    <string>$AGENT_INTERVAL</string>"
+  # 服务改名时卸载旧标签，避免重复上报
+  if [ "$AGENT_LABEL" != "com.bigcat.agent" ] && [ -f "$LEGACY_PLIST" ]; then
+    launchctl bootout system "$LEGACY_PLIST" 2>/dev/null || true
+    rm -f "$LEGACY_PLIST"
+    log "已移除旧 launchd 服务 com.bigcat.agent"
+  fi
   log "agent 已启动，正在向 $SERVER_URL 上报"
 }
 

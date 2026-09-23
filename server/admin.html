@@ -543,6 +543,34 @@
   </div>
 </div>
 
+<!-- 一键部署指令弹窗 -->
+<div id="modal-deploy" class="modal-bg hidden">
+  <div class="modal" style="width:min(660px,94vw)">
+    <h2>一键部署指令 <span class="muted" id="deploy-node-name" style="font-size:14px;font-weight:normal"></span></h2>
+    <div class="tabs" id="deploy-tabs">
+      <button data-os="linux" class="active">Linux</button>
+      <button data-os="macos">macOS</button>
+      <button data-os="windows">Windows</button>
+    </div>
+    <label>安装选项</label>
+    <div class="form2">
+      <div><label>采集间隔（秒）</label><input id="deploy-interval" type="number" min="1" value="2"></div>
+      <div><label>服务名称 <span class="muted">（留空用默认 bigcat-agent）</span></label><input id="deploy-svc" type="text" placeholder="bigcat-agent"></div>
+    </div>
+    <label>安装目录 <span class="muted" id="deploy-dir-hint">（留空用默认 /opt/bigcat）</span></label>
+    <input id="deploy-dir" type="text" placeholder="/opt/bigcat">
+    <label>GitHub 代理 <span class="muted">（国内机器访问 GitHub 困难时填写，例如 https://ghproxy.com/）</span></label>
+    <input id="deploy-proxy" type="text" placeholder="https://ghproxy.com/">
+    <label>指令 <span class="muted">（在被控机上以 root / 管理员身份执行）</span></label>
+    <textarea id="deploy-cmd" rows="4" readonly
+      style="width:100%;font-family:monospace;font-size:12px;background:#0d131b;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;resize:vertical"></textarea>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button class="ghost" id="btn-deploy-cancel">关闭</button>
+      <button id="btn-deploy-copy">⧉ 复制指令</button>
+    </div>
+  </div>
+</div>
+
 <!-- 延迟任务弹窗 -->
 <div id="modal-ping" class="modal-bg hidden">
   <div class="modal">
@@ -641,6 +669,8 @@ async function api(path, method, body) {
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
   {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+/* 把字符串安全地嵌入单引号 HTML 属性内的 JS 字符串字面量 */
+function jsStr(s) { return JSON.stringify(String(s == null ? '' : s)).replace(/'/g, "\\u0027").replace(/</g, "\\u003c"); }
 function fmtSize(b) {
   if (b == null) return '-';
   const u = ['B','KB','MB','GB','TB']; let i = 0;
@@ -864,7 +894,8 @@ async function loadNodes() {
       <td><span class="token" id="tok-${esc(c.uuid)}">${masked}</span>
         <button class="ghost small" onclick="toggleToken('${esc(c.uuid)}','${esc(c.token)}')">显示</button>
         <button class="ghost small" onclick="copyText('${esc(c.token)}')">复制</button></td>
-      <td><button class="ghost small" onclick='openEdit(${JSON.stringify(c.uuid)})'>编辑</button>
+      <td><button class="ghost small" onclick='openDeploy(${jsStr(c.uuid)},${jsStr(c.token)},${jsStr(c.name||"")})'>安装指令</button>
+        <button class="ghost small" onclick='openEdit(${JSON.stringify(c.uuid)})'>编辑</button>
         <button class="danger small" onclick="delNode('${esc(c.uuid)}','${esc(c.name||'')}')">删除</button></td></tr>`;
   }).join('');
 }
@@ -894,6 +925,72 @@ window.copyText = async (t) => {
     alert('复制失败，请手动长按复制');
   }
 };
+
+/* ---------------- 一键部署指令 ---------------- */
+const DEPLOY_DEFAULT_DIR = {linux: '/opt/bigcat', macos: '/usr/local/bigcat', windows: 'C:\\Program Files\\bigcat'};
+let deployCtx = {uuid: '', token: '', name: '', os: 'linux'};
+
+window.openDeploy = (uuid, token, name) => {
+  deployCtx = {uuid, token, name, os: 'linux'};
+  $('deploy-node-name').textContent = name ? '— ' + name : '';
+  $('deploy-interval').value = 2;
+  $('deploy-svc').value = '';
+  $('deploy-dir').value = '';
+  $('deploy-proxy').value = '';
+  setDeployOS('linux');
+  $('modal-deploy').classList.remove('hidden');
+};
+
+function setDeployOS(os) {
+  deployCtx.os = os;
+  document.querySelectorAll('#deploy-tabs button').forEach(x =>
+    x.classList.toggle('active', x.dataset.os === os));
+  $('deploy-dir-hint').textContent = '（留空用默认 ' + DEPLOY_DEFAULT_DIR[os] + '）';
+  $('deploy-dir').placeholder = DEPLOY_DEFAULT_DIR[os];
+  refreshDeployCmd();
+}
+document.querySelectorAll('#deploy-tabs button').forEach(b =>
+  b.addEventListener('click', () => setDeployOS(b.dataset.os)));
+['deploy-interval', 'deploy-svc', 'deploy-dir', 'deploy-proxy'].forEach(id =>
+  $(id).addEventListener('input', refreshDeployCmd));
+$('btn-deploy-cancel').onclick = closeModals;
+$('btn-deploy-copy').onclick = () => copyText($('deploy-cmd').value);
+
+function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+function psQuote(s) { return '"' + String(s).replace(/"/g, '`"') + '"'; }
+
+function refreshDeployCmd() {
+  const interval = Math.max(1, parseInt($('deploy-interval').value, 10) || 2);
+  const svc = $('deploy-svc').value.trim();
+  const dir = $('deploy-dir').value.trim();
+  let proxy = $('deploy-proxy').value.trim();
+  if (proxy && !/\/$/.test(proxy)) proxy += '/';
+  const origin = location.origin, token = deployCtx.token;
+  const repo = 'https://github.com/zhanghaobo1987/bigcat';
+  const rawBase = 'https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/';
+  let cmd = '';
+  if (deployCtx.os === 'windows') {
+    const url = proxy + rawBase + 'install.ps1';
+    let extra = '';
+    if (interval !== 2) extra += ' -IntervalSec ' + interval;
+    if (dir) extra += ' -InstallDir ' + psQuote(dir);
+    if (svc) extra += ' -ServiceName ' + psQuote(svc);
+    if (proxy) extra += ' -RepoUrl ' + psQuote(proxy + repo);
+    cmd = 'Invoke-WebRequest -Uri ' + url + ' -OutFile $env:TEMP\\bigcat-install.ps1; ' +
+      'powershell -ExecutionPolicy Bypass -File $env:TEMP\\bigcat-install.ps1' +
+      ' -Mode agent -ServerUrl ' + origin + ' -Token ' + token + extra;
+  } else {
+    const script = deployCtx.os === 'macos' ? 'install-macos.sh' : 'install.sh';
+    const url = proxy + rawBase + script;
+    let extra = '';
+    if (interval !== 2) extra += ' --interval ' + interval;
+    if (dir) extra += ' --install-dir ' + shQuote(dir);
+    if (svc) extra += ' --service-name ' + shQuote(svc);
+    if (proxy) extra += ' --repo-url ' + shQuote(proxy + repo);
+    cmd = 'curl -fsSL ' + url + ' | sudo bash -s -- agent ' + origin + ' ' + token + extra;
+  }
+  $('deploy-cmd').value = cmd;
+}
 window.delNode = async (uuid, name) => {
   if (!confirm('确定删除节点「' + (name || uuid.slice(0,8)) + '」吗？其监控数据将一并删除。')) return;
   await api('/api/admin/client/' + uuid, 'DELETE');

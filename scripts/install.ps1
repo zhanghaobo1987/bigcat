@@ -19,6 +19,12 @@
     powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server -Port 8080 -AdminUser admin -AdminPassword "xxx"
     powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode agent -ServerUrl http://主控IP:25774 -Token <token>
 
+  agent 可调选项（参数或 BIGCAT_ 前缀环境变量）:
+    -IntervalSec 5                  上报间隔秒数（默认 2）
+    -InstallDir "D:\bigcat"         安装目录（默认 C:\Program Files\bigcat）
+    -ServiceName my-agent           计划任务名（默认 bigcat-agent）
+    -RepoUrl <地址>                 源码仓库地址，用于 GitHub 访问困难时走代理
+
   也支持 git clone 后本地运行。
 #>
 param(
@@ -28,13 +34,25 @@ param(
   [string]$AdminUser = "",
   [string]$ServerUrl = "",
   [string]$Token = "",
-  [string]$AdminPassword = ""
+  [string]$AdminPassword = "",
+  # agent 可调选项（也可用 BIGCAT_ 前缀环境变量）
+  [int]$IntervalSec = 0,
+  [string]$InstallDir = "",
+  [string]$ServiceName = "",
+  [string]$RepoUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
-$RepoUrl  = "https://github.com/zhanghaobo1987/bigcat"
-$ZipUrl   = "https://github.com/zhanghaobo1987/bigcat/archive/refs/heads/main.zip"
-$InstallDir = "C:\Program Files\bigcat"
+# 环境变量兜底（参数优先）
+if ($IntervalSec -le 0 -and $env:BIGCAT_INTERVAL) { $IntervalSec = [int]$env:BIGCAT_INTERVAL }
+if ($IntervalSec -le 0) { $IntervalSec = 2 }
+if (-not $InstallDir -and $env:BIGCAT_INSTALL_DIR) { $InstallDir = $env:BIGCAT_INSTALL_DIR }
+if (-not $InstallDir) { $InstallDir = "C:\Program Files\bigcat" }
+if (-not $ServiceName -and $env:BIGCAT_SERVICE_NAME) { $ServiceName = $env:BIGCAT_SERVICE_NAME }
+if (-not $ServiceName) { $ServiceName = "bigcat-agent" }
+if (-not $RepoUrl -and $env:BIGCAT_REPO_URL) { $RepoUrl = $env:BIGCAT_REPO_URL }
+if (-not $RepoUrl) { $RepoUrl = "https://github.com/zhanghaobo1987/bigcat" }
+$ZipUrl = $RepoUrl.TrimEnd('/') + "/archive/refs/heads/main.zip"
 $VenvPythonw = Join-Path $InstallDir "venv\Scripts\pythonw.exe"
 $VenvPython  = Join-Path $InstallDir "venv\Scripts\python.exe"
 
@@ -193,7 +211,10 @@ function Install-Server {
 function Install-Agent {
   # ---- 升级检测：已安装则复用原主控地址与 token，跳过提问 ----
   $upgrade = $false
-  $oldTask = Get-ScheduledTask -TaskName "bigcat-agent" -ErrorAction SilentlyContinue
+  $oldTask = Get-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
+  if (-not $oldTask -and $ServiceName -ne "bigcat-agent") {
+    $oldTask = Get-ScheduledTask -TaskName "bigcat-agent" -ErrorAction SilentlyContinue
+  }
   if ($oldTask) {
     $upgrade = $true
     $args0 = $oldTask.Actions[0].Arguments
@@ -212,10 +233,14 @@ function Install-Agent {
   Copy-Item -Force (Join-Path $src "agent\agent.py") $InstallDir
   Setup-Venv
 
-  $taskName = "bigcat-agent"
+  $taskName = $ServiceName
+  if ($taskName -ne "bigcat-agent") {
+    # 服务改名时卸载旧任务，避免重复上报
+    Unregister-ScheduledTask -TaskName "bigcat-agent" -Confirm:$false -ErrorAction SilentlyContinue
+  }
   Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
   $action = New-ScheduledTaskAction -Execute $VenvPythonw `
-    -Argument "`"$InstallDir\agent.py`" --server $ServerUrl --token $Token --interval 2" `
+    -Argument "`"$InstallDir\agent.py`" --server $ServerUrl --token $Token --interval $IntervalSec" `
     -WorkingDirectory $InstallDir
   $trigger = New-ScheduledTaskTrigger -AtStartup
   $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
