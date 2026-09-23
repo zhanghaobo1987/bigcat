@@ -120,15 +120,24 @@ install_python() {
   if ! command -v python3 >/dev/null; then
     log "安装 Python3..."
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv python3-pip
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv python3-pip \
+      || die "apt 安装 Python3 失败"
+  elif ! python3 -c "import ensurepip" 2>/dev/null; then
+    # Debian/Ubuntu 的 python3 默认不带 ensurepip，需补装 python3-venv
+    log "补装 python3-venv（当前 python3 缺少 ensurepip，无法创建虚拟环境）..."
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv \
+      || die "apt 安装 python3-venv 失败"
   fi
   command -v python3 >/dev/null || die "安装 python3 失败"
 }
 
 setup_venv() {
-  if [ ! -x "$VENV/bin/python" ]; then
+  # pip 不可用视为 venv 已损坏（例如上次安装中途失败留下的半截目录），删掉重建
+  if [ ! -x "$VENV/bin/pip" ]; then
+    [ -n "$VENV" ] && rm -rf "$VENV"
     log "创建虚拟环境 $VENV ..."
-    python3 -m venv "$VENV"
+    python3 -m venv "$VENV" || die "创建虚拟环境失败"
   fi
   log "安装 Python 依赖..."
   "$VENV/bin/pip" install -q --upgrade pip
