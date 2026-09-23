@@ -200,7 +200,8 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now bigcat
+  systemctl enable bigcat
+  systemctl restart bigcat   # 重装/升级时确保加载新代码
   open_firewall "$PORT"
   local ip
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -248,7 +249,8 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now bigcat-agent
+  systemctl enable bigcat-agent
+  systemctl restart bigcat-agent   # 重装/升级时确保加载新代码
   log "agent 已启动，正在向 $SERVER_URL 上报"
 }
 

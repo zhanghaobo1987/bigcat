@@ -27,6 +27,7 @@ JSON-RPC methods implemented:
 """
 import functools
 import json
+import os
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -114,6 +115,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             return send_from_directory(
                 app.config["static_dir"] + "/images/logo", "linux.svg"
             )
+
+    # bigcat 自带后台管理页：主题里的"后台登录/管理"按钮链向 /admin
+    @app.route("/admin")
+    @app.route("/admin/<path:_sub>")
+    def admin_panel(_sub=None):
+        return send_from_directory(
+            os.path.dirname(os.path.abspath(__file__)), "admin.html"
+        )
 
     # ------------------------------------------------------------ helpers
     def _public_node(c: dict) -> dict:
@@ -546,6 +555,20 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             return fn(*a, **kw)
         return wrapper
 
+    @app.route("/api/admin/setup", methods=["POST"])
+    def admin_setup():
+        # 仅在尚未创建管理员时可用（对应 admin 面板的首次初始化）
+        if store.has_admin():
+            return jsonify({"error": "admin already exists"}), 400
+        data = request.get_json(force=True, silent=True) or {}
+        username = (data.get("username") or "admin").strip() or "admin"
+        password = data.get("password", "")
+        if not password:
+            return jsonify({"error": "password required"}), 400
+        store.set_admin(username, password)
+        session["admin"] = True
+        return jsonify({"ok": True, "username": username})
+
     @app.route("/api/admin/login", methods=["POST"])
     def admin_login():
         data = request.get_json(force=True, silent=True) or {}
@@ -601,6 +624,15 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             if k in data:
                 store.set_setting(k, str(data[k]))
         return jsonify({"ok": True})
+
+    # ------------------------------------------------------------ SPA fallback
+    # 必须注册在所有路由之后：/traffic、/instance/xxx 等前端路由刷新或直连时
+    # 返回 index.html 交给前端路由接管；未知 API 路径返回 JSON 404
+    @app.route("/<path:p>")
+    def spa_fallback(p):
+        if p.startswith("api/"):
+            return jsonify({"error": "not found"}), 404
+        return send_from_directory(app.config["static_dir"], "index.html")
 
     return app
 

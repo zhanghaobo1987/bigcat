@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
   bigcat 一键安装脚本（Windows）
@@ -155,8 +155,9 @@ function Install-Server {
   $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
   $settings = New-ScheduledTaskSettingsSet -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Force `
     -Principal $principal -Settings $settings -Description "bigcat monitoring server" | Out-Null
+  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   Start-ScheduledTask -TaskName $taskName
   Log "计划任务 $taskName 已创建并启动（开机自启）"
 
@@ -187,8 +188,9 @@ function Install-Agent {
   $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
   $settings = New-ScheduledTaskSettingsSet -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Force `
     -Principal $principal -Settings $settings -Description "bigcat monitoring agent" | Out-Null
+  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   Start-ScheduledTask -TaskName $taskName
   Log "计划任务 $taskName 已创建并启动（开机自启）"
   Log "agent 正在向 $ServerUrl 上报"
