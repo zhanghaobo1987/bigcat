@@ -23,9 +23,17 @@ INSTALL_DIR="${BIGCAT_INSTALL_DIR:-/usr/local/bigcat}"
 VENV="$INSTALL_DIR/venv"
 DEFAULT_PORT=25774
 PLIST_DIR="/Library/LaunchDaemons"
-# agent 可调选项（也可用 --interval/--install-dir/--service-name/--repo-url 参数覆盖）
+# agent 可调选项（也可用 --interval/--install-dir/--service-name/--repo-url 等参数覆盖）
 AGENT_INTERVAL="${BIGCAT_INTERVAL:-2}"
 AGENT_SERVICE="${BIGCAT_SERVICE_NAME:-agent}"   # launchd 标签为 com.bigcat.<AGENT_SERVICE>
+AGENT_TRAFFIC_RESET_DAY="${BIGCAT_TRAFFIC_RESET_DAY:-0}"
+AGENT_GPU="${BIGCAT_GPU:-no}"
+AGENT_NO_REMOTE="${BIGCAT_DISABLE_REMOTE_EXEC:-no}"
+AGENT_INSECURE="${BIGCAT_INSECURE:-no}"
+AGENT_NIC_IP="${BIGCAT_NIC_IP:-no}"
+AGENT_DISK_MOUNT="${BIGCAT_DISK_MOUNT:-}"
+AGENT_INCLUDE_NICS="${BIGCAT_INCLUDE_NICS:-}"
+AGENT_EXCLUDE_NICS="${BIGCAT_EXCLUDE_NICS:-}"
 
 MODE="${1:-}"
 shift || true
@@ -46,6 +54,14 @@ while [ $# -gt 0 ]; do
     --install-dir)    INSTALL_DIR="${2:?--install-dir 需要一个路径}"; VENV="$INSTALL_DIR/venv"; shift 2 ;;
     --service-name)   AGENT_SERVICE="${2:?--service-name 需要一个名称}"; shift 2 ;;
     --repo-url)       REPO_URL="${2:?--repo-url 需要一个地址}"; shift 2 ;;
+    --traffic-reset-day) AGENT_TRAFFIC_RESET_DAY="${2:?--traffic-reset-day 需要 1-28}"; shift 2 ;;
+    --gpu)            AGENT_GPU="yes"; shift ;;
+    --disable-remote-exec) AGENT_NO_REMOTE="yes"; shift ;;
+    --insecure)       AGENT_INSECURE="yes"; shift ;;
+    --nic-ip)         AGENT_NIC_IP="yes"; shift ;;
+    --disk-mount)     AGENT_DISK_MOUNT="${2:?--disk-mount 需要一个挂载点}"; shift 2 ;;
+    --include-nics)   AGENT_INCLUDE_NICS="$(printf '%s' "${2:?--include-nics 需要网卡列表}" | tr -d '[:space:]')"; shift 2 ;;
+    --exclude-nics)   AGENT_EXCLUDE_NICS="$(printf '%s' "${2:?--exclude-nics 需要网卡列表}" | tr -d '[:space:]')"; shift 2 ;;
     *) if [ -z "$SERVER_URL" ]; then SERVER_URL="$1"; else TOKEN="$1"; fi; shift ;;
   esac
 done
@@ -267,6 +283,29 @@ install_agent() {
   cp "$src/agent/agent.py" "$INSTALL_DIR/"
   setup_venv
 
+  # 组装 agent 附加启动参数（只附加用户实际启用的选项）
+  AGENT_EXTRA=""
+  [ "${AGENT_TRAFFIC_RESET_DAY:-0}" -gt 0 ] 2>/dev/null && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--traffic-reset-day</string>
+    <string>$AGENT_TRAFFIC_RESET_DAY</string>"
+  [ "$AGENT_GPU" = "yes" ] && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--gpu</string>"
+  [ "$AGENT_NO_REMOTE" = "yes" ] && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--disable-remote-exec</string>"
+  [ "$AGENT_INSECURE" = "yes" ] && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--insecure</string>"
+  [ "$AGENT_NIC_IP" = "yes" ] && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--nic-ip</string>"
+  [ -n "$AGENT_DISK_MOUNT" ] && [ "$AGENT_DISK_MOUNT" != "/" ] && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--disk-mount</string>
+    <string>$AGENT_DISK_MOUNT</string>"
+  [ -n "$AGENT_INCLUDE_NICS" ] && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--include-nics</string>
+    <string>$AGENT_INCLUDE_NICS</string>"
+  [ -n "$AGENT_EXCLUDE_NICS" ] && AGENT_EXTRA="$AGENT_EXTRA
+    <string>--exclude-nics</string>
+    <string>$AGENT_EXCLUDE_NICS</string>"
+
   write_plist "$AGENT_LABEL" "\
     <string>$VENV/bin/python</string>
     <string>$INSTALL_DIR/agent.py</string>
@@ -275,7 +314,7 @@ install_agent() {
     <string>--token</string>
     <string>$TOKEN</string>
     <string>--interval</string>
-    <string>$AGENT_INTERVAL</string>"
+    <string>$AGENT_INTERVAL</string>$AGENT_EXTRA"
   # 服务改名时卸载旧标签，避免重复上报
   if [ "$AGENT_LABEL" != "com.bigcat.agent" ] && [ -f "$LEGACY_PLIST" ]; then
     launchctl bootout system "$LEGACY_PLIST" 2>/dev/null || true

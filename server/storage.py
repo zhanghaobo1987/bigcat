@@ -82,6 +82,8 @@ class Storage:
                     net_out         INTEGER DEFAULT 0,
                     net_total_up    INTEGER DEFAULT 0,
                     net_total_down  INTEGER DEFAULT 0,
+                    net_month_up    INTEGER DEFAULT 0,
+                    net_month_down  INTEGER DEFAULT 0,
                     traffic_up      INTEGER DEFAULT 0,
                     traffic_down    INTEGER DEFAULT 0,
                     process         INTEGER DEFAULT 0,
@@ -218,7 +220,7 @@ class Storage:
         self._migrate()
 
     def _migrate(self):
-        """Additive migrations for the clients table (v3 fields)."""
+        """Additive migrations for the clients table (v3 fields) and records table."""
         with self._lock:
             cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(clients)").fetchall()}
             for col, ddl in {
@@ -229,6 +231,13 @@ class Storage:
             }.items():
                 if col not in cols:
                     self._conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {ddl}")
+            rcols = {r["name"] for r in self._conn.execute("PRAGMA table_info(records)").fetchall()}
+            for col, ddl in {
+                "net_month_up": "INTEGER DEFAULT 0",
+                "net_month_down": "INTEGER DEFAULT 0",
+            }.items():
+                if col not in rcols:
+                    self._conn.execute(f"ALTER TABLE records ADD COLUMN {col} {ddl}")
             self._conn.commit()
 
     # ------------------------------------------------------------------ clients
@@ -323,7 +332,8 @@ class Storage:
         cols = (
             "client", "time", "cpu", "gpu", "ram", "ram_total", "swap",
             "swap_total", "load", "disk", "disk_total", "net_in", "net_out",
-            "net_total_up", "net_total_down", "traffic_up", "traffic_down",
+            "net_total_up", "net_total_down", "net_month_up", "net_month_down",
+            "traffic_up", "traffic_down",
             "process", "connections", "connections_udp", "uptime",
         )
         vals = [client_uuid, rec.get("time", now)] + [rec.get(c, 0) for c in cols[2:]]

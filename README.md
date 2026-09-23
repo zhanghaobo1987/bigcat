@@ -232,6 +232,19 @@ pip install psutil requests
 python3 agent/agent.py --server http://主控IP:25774 --token <token> --interval 2
 ```
 
+Agent 可选参数（也可用 `BIGCAT_` 前缀环境变量）：
+
+| 参数 | 说明 |
+|---|---|
+| `--traffic-reset-day 1` | 月流量重置日 1-28，`0`=关闭（默认 0） |
+| `--gpu` | 详细 GPU 监控（需 nvidia-smi） |
+| `--disable-remote-exec` | 禁用远程命令执行 |
+| `--insecure` | 忽略主控 TLS 证书校验（自签证书） |
+| `--nic-ip` | 从网卡获取本机 IP 上报 |
+| `--disk-mount /data` | 磁盘用量监控的挂载点（默认 `/`） |
+| `--include-nics eth0,eth1` | 只统计这些网卡（逗号分隔，支持 `*` 通配） |
+| `--exclude-nics 'docker*,veth*'` | 排除这些网卡 |
+
 ## API 兼容性
 
 服务端实现了 Komari 的公开 JSON-RPC 接口（`POST /api/rpc2`，`{"jsonrpc":"2.0","method":"public:xxx"}`）：

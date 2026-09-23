@@ -24,6 +24,14 @@
     -InstallDir "D:\bigcat"         安装目录（默认 C:\Program Files\bigcat）
     -ServiceName my-agent           计划任务名（默认 bigcat-agent）
     -RepoUrl <地址>                 源码仓库地址，用于 GitHub 访问困难时走代理
+    -TrafficResetDay 1              月流量重置日 1-28，0=关闭（默认 0）
+    -Gpu                            启用详细 GPU 监控（nvidia-smi）
+    -DisableRemoteExec              禁用远程命令执行
+    -Insecure                       忽略主控 TLS 证书校验（自签证书）
+    -NicIp                          从网卡获取本机 IP 上报
+    -DiskMount "D:\"               磁盘用量监控的挂载点（默认 / 或 C:\）
+    -IncludeNics "eth0,eth1"        只统计这些网卡（逗号分隔，支持 * 通配）
+    -ExcludeNics "docker*,veth*"    排除这些网卡（逗号分隔，支持 * 通配）
 
   也支持 git clone 后本地运行。
 #>
@@ -39,7 +47,15 @@ param(
   [int]$IntervalSec = 0,
   [string]$InstallDir = "",
   [string]$ServiceName = "",
-  [string]$RepoUrl = ""
+  [string]$RepoUrl = "",
+  [int]$TrafficResetDay = 0,
+  [switch]$Gpu,
+  [switch]$DisableRemoteExec,
+  [switch]$Insecure,
+  [switch]$NicIp,
+  [string]$DiskMount = "",
+  [string]$IncludeNics = "",
+  [string]$ExcludeNics = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +68,14 @@ if (-not $ServiceName -and $env:BIGCAT_SERVICE_NAME) { $ServiceName = $env:BIGCA
 if (-not $ServiceName) { $ServiceName = "bigcat-agent" }
 if (-not $RepoUrl -and $env:BIGCAT_REPO_URL) { $RepoUrl = $env:BIGCAT_REPO_URL }
 if (-not $RepoUrl) { $RepoUrl = "https://github.com/zhanghaobo1987/bigcat" }
+if ($TrafficResetDay -le 0 -and $env:BIGCAT_TRAFFIC_RESET_DAY) { $TrafficResetDay = [int]$env:BIGCAT_TRAFFIC_RESET_DAY }
+if (-not $Gpu -and $env:BIGCAT_GPU -match '^(1|true|yes|on)$') { $Gpu = $true }
+if (-not $DisableRemoteExec -and $env:BIGCAT_DISABLE_REMOTE_EXEC -match '^(1|true|yes|on)$') { $DisableRemoteExec = $true }
+if (-not $Insecure -and $env:BIGCAT_INSECURE -match '^(1|true|yes|on)$') { $Insecure = $true }
+if (-not $NicIp -and $env:BIGCAT_NIC_IP -match '^(1|true|yes|on)$') { $NicIp = $true }
+if (-not $DiskMount -and $env:BIGCAT_DISK_MOUNT) { $DiskMount = $env:BIGCAT_DISK_MOUNT }
+if (-not $IncludeNics -and $env:BIGCAT_INCLUDE_NICS) { $IncludeNics = $env:BIGCAT_INCLUDE_NICS }
+if (-not $ExcludeNics -and $env:BIGCAT_EXCLUDE_NICS) { $ExcludeNics = $env:BIGCAT_EXCLUDE_NICS }
 $ZipUrl = $RepoUrl.TrimEnd('/') + "/archive/refs/heads/main.zip"
 $VenvPythonw = Join-Path $InstallDir "venv\Scripts\pythonw.exe"
 $VenvPython  = Join-Path $InstallDir "venv\Scripts\python.exe"
@@ -239,8 +263,18 @@ function Install-Agent {
     Unregister-ScheduledTask -TaskName "bigcat-agent" -Confirm:$false -ErrorAction SilentlyContinue
   }
   Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+  # 组装 agent 启动参数（只附加用户实际启用的选项）
+  $agentArgs = "--server $ServerUrl --token $Token --interval $IntervalSec"
+  if ($TrafficResetDay -gt 0) { $agentArgs += " --traffic-reset-day $TrafficResetDay" }
+  if ($Gpu) { $agentArgs += " --gpu" }
+  if ($DisableRemoteExec) { $agentArgs += " --disable-remote-exec" }
+  if ($Insecure) { $agentArgs += " --insecure" }
+  if ($NicIp) { $agentArgs += " --nic-ip" }
+  if ($DiskMount -and $DiskMount -ne "/") { $agentArgs += " --disk-mount `"$DiskMount`"" }
+  if ($IncludeNics) { $agentArgs += " --include-nics $($IncludeNics -replace '\s','')" }
+  if ($ExcludeNics) { $agentArgs += " --exclude-nics $($ExcludeNics -replace '\s','')" }
   $action = New-ScheduledTaskAction -Execute $VenvPythonw `
-    -Argument "`"$InstallDir\agent.py`" --server $ServerUrl --token $Token --interval $IntervalSec" `
+    -Argument "`"$InstallDir\agent.py`" $agentArgs" `
     -WorkingDirectory $InstallDir
   $trigger = New-ScheduledTaskTrigger -AtStartup
   $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest

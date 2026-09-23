@@ -296,7 +296,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             return None
 
     def _iso(dt: datetime) -> str:
-        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        # 入库时间只到秒：查询边界也截断到秒，避免 "…16Z" > "…16.123456Z" 的字符串比较陷阱
+        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     # ============================================================ v3 core
     # 后台监控主循环：离线检测 / 负载告警 / 延迟监测 / 到期提醒 / 流量报告。
@@ -692,6 +693,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 "down": r.get("net_in", 0),
                 "totalUp": r.get("net_total_up", 0),
                 "totalDown": r.get("net_total_down", 0),
+                "monthUp": r.get("net_month_up", 0),
+                "monthDown": r.get("net_month_down", 0),
             },
             "connections": {
                 "tcp": r.get("connections", 0),
@@ -1363,6 +1366,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             "net_out": net.get("up", 0),     # bytes/s up -> out
             "net_total_up": net.get("totalUp", 0),
             "net_total_down": net.get("totalDown", 0),
+            "net_month_up": net.get("monthUp", 0),
+            "net_month_down": net.get("monthDown", 0),
             "traffic_up": net.get("up", 0),
             "traffic_down": net.get("down", 0),
             "process": rep.get("process", 0),

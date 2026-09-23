@@ -12,9 +12,13 @@ Register a node first (on the master):
     curl -X POST http://MASTER:25774/api/agent/register -d '{"name":"hk-1"}'
 """
 import argparse
+import datetime
+import fnmatch
 import json
+import os
 import platform
 import socket
+import ssl
 import subprocess
 import time
 import urllib.request
@@ -27,7 +31,25 @@ EXEC_MAX_OUTPUT = 64 * 1024
 EXEC_TIMEOUT = 120
 
 
-def _post(url: str, payload: dict, token: str = "", timeout: int = 10) -> dict:
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+_insecure_ctx = None
+
+
+def _ssl_context(insecure: bool):
+    """SSL context for talking to the master. Unverified only when --insecure."""
+    global _insecure_ctx
+    if not insecure:
+        return None
+    if _insecure_ctx is None:
+        _insecure_ctx = ssl._create_unverified_context()
+    return _insecure_ctx
+
+
+def _post(url: str, payload: dict, token: str = "", timeout: int = 10,
+          insecure: bool = False) -> dict:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"}
@@ -35,7 +57,8 @@ def _post(url: str, payload: dict, token: str = "", timeout: int = 10) -> dict:
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout,
+                                    context=_ssl_context(insecure)) as resp:
             return json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         print(f"[agent] HTTP {e.code}: {e.read().decode()[:200]}")
@@ -44,12 +67,16 @@ def _post(url: str, payload: dict, token: str = "", timeout: int = 10) -> dict:
     return {}
 
 
-def collect_basic_info():
+def collect_basic_info(args=None):
     import psutil
 
     vm = psutil.virtual_memory()
     sm = psutil.swap_memory()
-    du = psutil.disk_usage("/")
+    disk_mount = (args.disk_mount if args else None) or _default_disk_mount()
+    try:
+        du = psutil.disk_usage(disk_mount)
+    except Exception:
+        du = psutil.disk_usage(_default_disk_mount())
     uname = platform.uname()
     try:
         with open("/proc/cpuinfo") as f:
@@ -61,7 +88,7 @@ def collect_basic_info():
                 cpu_name = uname.processor or uname.machine
     except Exception:
         cpu_name = uname.processor or uname.machine
-    return {
+    info = {
         "cpu_name": cpu_name,
         "arch": uname.machine,
         "cpu_cores": psutil.cpu_count(logical=True) or 0,
@@ -73,9 +100,19 @@ def collect_basic_info():
         "version": "bigcat-agent/1.0.0",
         "name": socket.gethostname(),
     }
+    if args is not None:
+        if args.gpu:
+            g = collect_gpu()
+            if g and g.get("name"):
+                info["gpu_name"] = g["name"]
+        if args.nic_ip:
+            ip = detect_nic_ip()
+            if ip:
+                info["ipv4"] = ip
+    return info
 
 
-def collect_report(prev_net):
+def collect_report(prev_net, args):
     """Build a Komari v2 Report dict. Returns (report, new_prev_net)."""
     import psutil
 
@@ -86,16 +123,29 @@ def collect_report(prev_net):
         load1, load5, load15 = psutil.getloadavg()
     except Exception:
         load1 = load5 = load15 = 0.0
-    du = psutil.disk_usage("/")
-    net = psutil.net_io_counters()
+    disk_mount = (args.disk_mount if args else None) or _default_disk_mount()
+    try:
+        du = psutil.disk_usage(disk_mount)
+    except Exception:
+        disk_mount = _default_disk_mount()
+        du = psutil.disk_usage(disk_mount)
+
+    include = _parse_nic_list(args.include_nics if args else "")
+    exclude = _parse_nic_list(args.exclude_nics if args else "")
+    sent_total, recv_total = net_totals_filtered(include, exclude)
     now = time.time()
 
     up = down = 0
     if prev_net is not None:
         dt = max(now - prev_net["t"], 0.001)
-        up = max(int((net.bytes_sent - prev_net["sent"]) / dt), 0)
-        down = max(int((net.bytes_recv - prev_net["recv"]) / dt), 0)
-    new_prev = {"t": now, "sent": net.bytes_sent, "recv": net.bytes_recv}
+        up = max(int((sent_total - prev_net["sent"]) / dt), 0)
+        down = max(int((recv_total - prev_net["recv"]) / dt), 0)
+    new_prev = {"t": now, "sent": sent_total, "recv": recv_total}
+
+    reset_day = args.traffic_reset_day if args else 0
+    month_up, month_down = monthly_traffic(sent_total, recv_total, reset_day)
+
+    gpu_info = collect_gpu() if (args and args.gpu) else None
 
     conns = psutil.net_connections(kind="inet")
     tcp = sum(1 for c in conns if c.type == socket.SOCK_STREAM)
@@ -107,11 +157,13 @@ def collect_report(prev_net):
         "swap": {"total": sm.total, "used": sm.used},
         "load": {"load1": round(load1, 2), "load5": round(load5, 2),
                  "load15": round(load15, 2)},
-        "disk": {"total": du.total, "used": du.used},
+        "disk": {"total": du.total, "used": du.used, "mount": disk_mount},
         "network": {
             "up": up, "down": down,
-            "totalUp": net.bytes_sent, "totalDown": net.bytes_recv,
+            "totalUp": sent_total, "totalDown": recv_total,
+            "monthUp": month_up, "monthDown": month_down,
         },
+        "gpu": gpu_info or {},
         "connections": {"tcp": tcp, "udp": udp},
         "uptime": int(time.time() - psutil.boot_time()),
         "process": len(psutil.pids()),
@@ -140,24 +192,26 @@ def run_exec_task(task: dict) -> dict:
         return {"ok": False, "output": f"[执行失败] {e}"}
 
 
-def poll_exec_tasks(server: str, token: str):
+def poll_exec_tasks(server: str, token: str, insecure: bool = False):
     """Fetch pending exec tasks from master, run them, report results back."""
-    resp = _get(f"{server}/api/agent/tasks", token=token)
+    resp = _get(f"{server}/api/agent/tasks", token=token, insecure=insecure)
     tasks = resp.get("tasks") or []
     for task in tasks:
         print(f"[agent] exec task #{task.get('id')}: {str(task.get('command'))[:80]}")
         result = run_exec_task(task)
         _post(f"{server}/api/agent/task_result",
               {"task_id": task.get("id"), "output": result["output"],
-               "ok": result["ok"]}, token=token)
+               "ok": result["ok"]}, token=token, insecure=insecure)
 
 
-def _get(url: str, token: str = "", timeout: int = 10) -> dict:
+def _get(url: str, token: str = "", timeout: int = 10,
+         insecure: bool = False) -> dict:
     req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout,
+                                    context=_ssl_context(insecure)) as resp:
             return json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         print(f"[agent] HTTP {e.code}: {e.read().decode()[:200]}")
@@ -166,11 +220,148 @@ def _get(url: str, token: str = "", timeout: int = 10) -> dict:
     return {}
 
 
+# ------------------------------------------------------------------ 网卡过滤
+def _parse_nic_list(s: str):
+    return [p.strip() for p in str(s or "").split(",") if p.strip()]
+
+
+def _nic_allowed(name: str, include, exclude) -> bool:
+    if include and not any(fnmatch.fnmatch(name, pat) for pat in include):
+        return False
+    if any(fnmatch.fnmatch(name, pat) for pat in exclude):
+        return False
+    return True
+
+
+def net_totals_filtered(include, exclude):
+    """(bytes_sent, bytes_recv) summed over NICs passing the include/exclude filters."""
+    import psutil
+    pernic = psutil.net_io_counters(pernic=True) or {}
+    sent = recv = 0
+    for name, counters in pernic.items():
+        if _nic_allowed(name, include, exclude):
+            sent += counters.bytes_sent
+            recv += counters.bytes_recv
+    return sent, recv
+
+
+# ------------------------------------------------------------------ 月流量统计
+TRAFFIC_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".traffic_state.json")
+
+
+def billing_month_key(now: datetime.datetime, reset_day: int):
+    """Billing month containing `now` when traffic resets on `reset_day` each month."""
+    if not reset_day or not 1 <= reset_day <= 28:
+        return None
+    if now.day >= reset_day:
+        return now.strftime("%Y-%m")
+    prev = (now.replace(day=1) - datetime.timedelta(days=1))
+    return prev.strftime("%Y-%m")
+
+
+def _load_traffic_state():
+    try:
+        with open(TRAFFIC_STATE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_traffic_state(state):
+    try:
+        with open(TRAFFIC_STATE_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception as e:  # noqa: BLE001
+        print(f"[agent] traffic state save failed: {e}")
+
+
+def monthly_traffic(sent: int, recv: int, reset_day: int, now=None):
+    """(month_up, month_down) bytes used in the current billing cycle.
+
+    Returns (0, 0) when disabled. Re-bases on billing-month rollover or when
+    the kernel counters wrapped (reboot).
+    """
+    if not reset_day or not 1 <= reset_day <= 28:
+        return 0, 0
+    now = now or datetime.datetime.now()
+    key = billing_month_key(now, reset_day)
+    st = _load_traffic_state()
+    base_sent = st.get("base_sent", 0)
+    base_recv = st.get("base_recv", 0)
+    if st.get("key") != key or sent < base_sent or recv < base_recv:
+        st = {"key": key, "base_sent": sent, "base_recv": recv}
+        _save_traffic_state(st)
+        return 0, 0
+    return sent - base_sent, recv - base_recv
+
+
+# ------------------------------------------------------------------ GPU
+def _default_disk_mount() -> str:
+    """Platform-appropriate default mount point for disk usage."""
+    if os.name == "nt":
+        return os.environ.get("SystemDrive", "C:") + "\\"
+    return "/"
+def collect_gpu():
+    """Detailed GPU stats via nvidia-smi, or None when unavailable."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi",
+             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=15,
+        )
+        line = (out.stdout or "").strip().split("\n")[0]
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5 or not parts[0]:
+            return None
+        name, util, mem_used, mem_total, temp = parts[:5]
+        return {
+            "name": name,
+            "average_usage": float(util),
+            "memory_used": int(float(mem_used) * 1024 * 1024),
+            "memory_total": int(float(mem_total) * 1024 * 1024),
+            "temperature": float(temp),
+        }
+    except Exception:  # noqa: BLE001 - no GPU / no nvidia-smi
+        return None
+
+
+def detect_nic_ip() -> str:
+    """Local IP as seen on the default route's NIC (no traffic is actually sent)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def main():
     ap = argparse.ArgumentParser(description="bigcat agent")
     ap.add_argument("--server", required=True, help="master URL, e.g. http://1.2.3.4:25774")
     ap.add_argument("--token", required=True, help="node token from /api/agent/register")
     ap.add_argument("--interval", type=float, default=2.0, help="report interval seconds")
+    ap.add_argument("--traffic-reset-day", type=int,
+                    default=int(os.environ.get("BIGCAT_TRAFFIC_RESET_DAY", "0") or 0),
+                    help="monthly traffic reset day 1-28, 0 = disabled")
+    ap.add_argument("--gpu", action="store_true", default=_env_flag("BIGCAT_GPU"),
+                    help="enable detailed GPU monitoring via nvidia-smi")
+    ap.add_argument("--disable-remote-exec", action="store_true",
+                    default=_env_flag("BIGCAT_DISABLE_REMOTE_EXEC"),
+                    help="do not poll/execute remote commands from the master")
+    ap.add_argument("--insecure", action="store_true", default=_env_flag("BIGCAT_INSECURE"),
+                    help="skip TLS certificate verification (self-signed master cert)")
+    ap.add_argument("--include-nics", default=os.environ.get("BIGCAT_INCLUDE_NICS", ""),
+                    help="only count these NICs in network stats, comma-separated, * wildcards")
+    ap.add_argument("--exclude-nics", default=os.environ.get("BIGCAT_EXCLUDE_NICS", ""),
+                    help="exclude these NICs from network stats, comma-separated, * wildcards")
+    ap.add_argument("--disk-mount", default=os.environ.get("BIGCAT_DISK_MOUNT", "") or "",
+                    help="mount point reported as disk usage (default: / on Unix, system drive on Windows)")
+    ap.add_argument("--nic-ip", action="store_true", default=_env_flag("BIGCAT_NIC_IP"),
+                    help="report local IP detected from the default NIC in basic info")
     args = ap.parse_args()
 
     server = args.server.rstrip("/")
@@ -178,8 +369,9 @@ def main():
 
     # send static info once
     try:
-        info = collect_basic_info()
-        _post(f"{server}/api/agent/basicinfo", {"info": info}, token=args.token)
+        info = collect_basic_info(args)
+        _post(f"{server}/api/agent/basicinfo", {"info": info}, token=args.token,
+              insecure=args.insecure)
         print(f"[agent] basic info sent: {info['os']} / {info['cpu_cores']} cores")
     except Exception as e:  # noqa: BLE001
         print(f"[agent] basicinfo failed: {e}")
@@ -194,15 +386,17 @@ def main():
 
     while True:
         try:
-            report, prev_net = collect_report(prev_net)
-            _post(f"{server}/api/agent/report", {"report": report}, token=args.token)
+            report, prev_net = collect_report(prev_net, args)
+            _post(f"{server}/api/agent/report", {"report": report}, token=args.token,
+                  insecure=args.insecure)
         except Exception as e:  # noqa: BLE001
             print(f"[agent] report failed: {e}")
-        # 每轮顺带轮询远程执行任务（低频操作，失败不影响上报）
-        try:
-            poll_exec_tasks(server, args.token)
-        except Exception as e:  # noqa: BLE001
-            print(f"[agent] exec poll failed: {e}")
+        # 每轮顺带轮询远程执行任务（低频操作，失败不影响上报；可被 --disable-remote-exec 关闭）
+        if not args.disable_remote_exec:
+            try:
+                poll_exec_tasks(server, args.token, insecure=args.insecure)
+            except Exception as e:  # noqa: BLE001
+                print(f"[agent] exec poll failed: {e}")
         time.sleep(args.interval)
 
 

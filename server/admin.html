@@ -553,9 +553,19 @@
       <button data-os="windows">Windows</button>
     </div>
     <label>安装选项</label>
+    <div class="chk-list" style="margin-bottom:12px">
+      <label><input type="checkbox" id="deploy-gpu"> 详细 GPU 监控 <span class="muted">（需 nvidia-smi）</span></label>
+      <label><input type="checkbox" id="deploy-no-remote"> 禁用远程控制</label>
+      <label><input type="checkbox" id="deploy-insecure"> 忽略不安全证书 <span class="muted">（自签证书）</span></label>
+      <label><input type="checkbox" id="deploy-nic-ip"> 从网卡获取 IP 地址</label>
+    </div>
     <div class="form2">
       <div><label>采集间隔（秒）</label><input id="deploy-interval" type="number" min="1" value="2"></div>
+      <div><label>月流量重置日 <span class="muted">（1-28，0=关闭）</span></label><input id="deploy-reset-day" type="number" min="0" max="28" value="0"></div>
       <div><label>服务名称 <span class="muted">（留空用默认 bigcat-agent）</span></label><input id="deploy-svc" type="text" placeholder="bigcat-agent"></div>
+      <div><label>磁盘挂载点 <span class="muted">（留空用 /）</span></label><input id="deploy-disk-mount" type="text" placeholder="/"></div>
+      <div><label>指定网卡 <span class="muted">（逗号分隔，支持 * 通配）</span></label><input id="deploy-include-nics" type="text" placeholder="eth0,eth1"></div>
+      <div><label>排除网卡 <span class="muted">（逗号分隔，支持 * 通配）</span></label><input id="deploy-exclude-nics" type="text" placeholder="docker*,veth*"></div>
     </div>
     <label>安装目录 <span class="muted" id="deploy-dir-hint">（留空用默认 /opt/bigcat）</span></label>
     <input id="deploy-dir" type="text" placeholder="/opt/bigcat">
@@ -937,6 +947,14 @@ window.openDeploy = (uuid, token, name) => {
   $('deploy-svc').value = '';
   $('deploy-dir').value = '';
   $('deploy-proxy').value = '';
+  $('deploy-gpu').checked = false;
+  $('deploy-no-remote').checked = false;
+  $('deploy-insecure').checked = false;
+  $('deploy-nic-ip').checked = false;
+  $('deploy-reset-day').value = 0;
+  $('deploy-disk-mount').value = '';
+  $('deploy-include-nics').value = '';
+  $('deploy-exclude-nics').value = '';
   setDeployOS('linux');
   $('modal-deploy').classList.remove('hidden');
 };
@@ -951,13 +969,29 @@ function setDeployOS(os) {
 }
 document.querySelectorAll('#deploy-tabs button').forEach(b =>
   b.addEventListener('click', () => setDeployOS(b.dataset.os)));
-['deploy-interval', 'deploy-svc', 'deploy-dir', 'deploy-proxy'].forEach(id =>
+['deploy-interval', 'deploy-svc', 'deploy-dir', 'deploy-proxy', 'deploy-reset-day',
+ 'deploy-disk-mount', 'deploy-include-nics', 'deploy-exclude-nics'].forEach(id =>
   $(id).addEventListener('input', refreshDeployCmd));
+['deploy-gpu', 'deploy-no-remote', 'deploy-insecure', 'deploy-nic-ip'].forEach(id =>
+  $(id).addEventListener('change', refreshDeployCmd));
 $('btn-deploy-cancel').onclick = closeModals;
 $('btn-deploy-copy').onclick = () => copyText($('deploy-cmd').value);
 
 function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 function psQuote(s) { return '"' + String(s).replace(/"/g, '`"') + '"'; }
+
+function deployExtraOpts() {
+  return {
+    gpu: $('deploy-gpu').checked,
+    noRemote: $('deploy-no-remote').checked,
+    insecure: $('deploy-insecure').checked,
+    nicIp: $('deploy-nic-ip').checked,
+    resetDay: Math.min(28, Math.max(0, parseInt($('deploy-reset-day').value, 10) || 0)),
+    diskMount: $('deploy-disk-mount').value.trim(),
+    includeNics: $('deploy-include-nics').value.replace(/\s+/g, ''),
+    excludeNics: $('deploy-exclude-nics').value.replace(/\s+/g, ''),
+  };
+}
 
 function refreshDeployCmd() {
   const interval = Math.max(1, parseInt($('deploy-interval').value, 10) || 2);
@@ -968,6 +1002,7 @@ function refreshDeployCmd() {
   const origin = location.origin, token = deployCtx.token;
   const repo = 'https://github.com/zhanghaobo1987/bigcat';
   const rawBase = 'https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/';
+  const o = deployExtraOpts();
   let cmd = '';
   if (deployCtx.os === 'windows') {
     const url = proxy + rawBase + 'install.ps1';
@@ -976,6 +1011,14 @@ function refreshDeployCmd() {
     if (dir) extra += ' -InstallDir ' + psQuote(dir);
     if (svc) extra += ' -ServiceName ' + psQuote(svc);
     if (proxy) extra += ' -RepoUrl ' + psQuote(proxy + repo);
+    if (o.resetDay > 0) extra += ' -TrafficResetDay ' + o.resetDay;
+    if (o.gpu) extra += ' -Gpu';
+    if (o.noRemote) extra += ' -DisableRemoteExec';
+    if (o.insecure) extra += ' -Insecure';
+    if (o.nicIp) extra += ' -NicIp';
+    if (o.diskMount) extra += ' -DiskMount ' + psQuote(o.diskMount);
+    if (o.includeNics) extra += ' -IncludeNics ' + psQuote(o.includeNics);
+    if (o.excludeNics) extra += ' -ExcludeNics ' + psQuote(o.excludeNics);
     cmd = 'Invoke-WebRequest -Uri ' + url + ' -OutFile $env:TEMP\\bigcat-install.ps1; ' +
       'powershell -ExecutionPolicy Bypass -File $env:TEMP\\bigcat-install.ps1' +
       ' -Mode agent -ServerUrl ' + origin + ' -Token ' + token + extra;
@@ -987,6 +1030,14 @@ function refreshDeployCmd() {
     if (dir) extra += ' --install-dir ' + shQuote(dir);
     if (svc) extra += ' --service-name ' + shQuote(svc);
     if (proxy) extra += ' --repo-url ' + shQuote(proxy + repo);
+    if (o.resetDay > 0) extra += ' --traffic-reset-day ' + o.resetDay;
+    if (o.gpu) extra += ' --gpu';
+    if (o.noRemote) extra += ' --disable-remote-exec';
+    if (o.insecure) extra += ' --insecure';
+    if (o.nicIp) extra += ' --nic-ip';
+    if (o.diskMount) extra += ' --disk-mount ' + shQuote(o.diskMount);
+    if (o.includeNics) extra += ' --include-nics ' + shQuote(o.includeNics);
+    if (o.excludeNics) extra += ' --exclude-nics ' + shQuote(o.excludeNics);
     cmd = 'curl -fsSL ' + url + ' | sudo bash -s -- agent ' + origin + ' ' + token + extra;
   }
   $('deploy-cmd').value = cmd;
