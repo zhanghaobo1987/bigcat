@@ -44,45 +44,65 @@ bigcat/
 **安装主控端（服务端）：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh \
-  | sudo bash -s -- server
-# 指定端口： ... | sudo bash -s -- server --port 8080
-# 预设管理密码： BIGCAT_ADMIN_PASSWORD=xxx ... | sudo bash -s -- server
-# 全自动示例： ... | sudo bash -s -- server --port 8080 --admin-user admin --admin-password "xxx"
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- server
+```
+
+指定端口：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- server --port 8080
+```
+
+预设管理密码：
+
+```bash
+BIGCAT_ADMIN_PASSWORD=xxx curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- server
+```
+
+全自动示例：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- server --port 8080 --admin-user admin --admin-password "xxx"
 ```
 
 **安装被控端（Agent，需先在主控注册拿到 token）：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh \
-  | sudo bash -s -- agent http://主控IP:25774 <token>
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- agent http://主控IP:25774 <token>
 ```
 
 **卸载：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall.sh \
-  | sudo bash -s -- all            # 卸载全部（保留监控数据）
-# sudo bash -s -- all --purge      # 卸载全部并删除数据
-# sudo bash -s -- server           # 只卸载主控端
-# sudo bash -s -- agent            # 只卸载被控端
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall.sh | sudo bash -s -- all
 ```
+
+上面命令卸载全部（保留监控数据）。卸载全部并删除数据：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall.sh | sudo bash -s -- all --purge
+```
+
+只卸载主控端把末尾 `all` 换成 `server`，只卸载被控端换成 `agent`。
 
 ### macOS
 
 **安装主控端：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh \
-  | sudo bash -s -- server
-# 指定端口： ... | sudo bash -s -- server --port 8080
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- server
+```
+
+指定端口：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- server --port 8080
 ```
 
 **安装被控端：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh \
-  | sudo bash -s -- agent http://主控IP:25774 <token>
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- agent http://主控IP:25774 <token>
 ```
 
 服务通过 launchd 注册（`com.bigcat.server` / `com.bigcat.agent`），开机自启。
@@ -90,9 +110,10 @@ curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/
 **卸载：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall-macos.sh \
-  | sudo bash -s -- all [--purge]
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall-macos.sh | sudo bash -s -- all
 ```
+
+彻底删除数据：在末尾加 `--purge` 参数。
 
 ### Windows
 
@@ -107,11 +128,14 @@ irm https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install
 **安装主控端：**
 
 ```powershell
-# 先下载脚本（以便传参）
 Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 -OutFile $env:TEMP\install.ps1
 powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server
-# 指定端口 / 预设密码：
-# powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server -Port 8080 -AdminUser admin -AdminPassword "你的强密码"
+```
+
+指定端口 / 预设密码：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server -Port 8080 -AdminUser admin -AdminPassword "你的强密码"
 ```
 
 **安装被控端：**
@@ -128,8 +152,9 @@ powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode agent -Serv
 ```powershell
 Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall.ps1 -OutFile $env:TEMP\uninstall.ps1
 powershell -ExecutionPolicy Bypass -File $env:TEMP\uninstall.ps1 -Mode all
-# 彻底删除数据：加 -Purge
 ```
+
+彻底删除数据：在末尾加 `-Purge` 参数。
 
 ### 注册被控节点（拿 token）
 
@@ -139,8 +164,9 @@ powershell -ExecutionPolicy Bypass -File $env:TEMP\uninstall.ps1 -Mode all
 curl -X POST http://主控IP:25774/api/agent/register \
   -H "Content-Type: application/json" \
   -d '{"name":"hk-1"}'
-# 返回 {"uuid": "...", "token": "..."}，token 填给对应机器的安装命令
 ```
+
+返回 `{"uuid": "...", "token": "..."}`，把 token 填给对应机器的安装命令。
 
 也可以直接打开后台管理页 **http://主控IP:25774/admin**，登录后在「节点管理」里
 点几下完成添加，页面会直接给出被控机的**一键安装命令**（含 token）。
@@ -186,7 +212,13 @@ python3 app.py --port 25774 --db data/bigcat.db
 ```bash
 cd server
 python3 app.py --db data/bigcat.db --set-admin "admin:你的强密码"
-# 只改密码（保留原用户名）: python3 app.py --db data/bigcat.db --set-admin "你的强密码"
+```
+
+只改密码（保留原用户名）：
+
+```bash
+cd server
+python3 app.py --db data/bigcat.db --set-admin "你的强密码"
 ```
 
 然后浏览器打开 `http://服务器IP:25774`。
