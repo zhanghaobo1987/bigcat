@@ -23,7 +23,9 @@ surface Komari themes expect:
 JSON-RPC methods implemented:
   public:getNodesInformation, public:getPublicSettings, public:getVersion,
   public:getMe, public:queryMetrics, public:getClientRecentRecords,
-  public:getRecordsByUUID, public:listMetricDefinitions
+  public:getRecordsByUUID, public:listMetricDefinitions,
+  public:getPublicPingTasks, public:getPingMetricStats, public:getPingRecords,
+  common:getNodesLatestStatus
 """
 import functools
 import json
@@ -1009,6 +1011,31 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             hours=str(params.get("hours", "4") or "4"),
         )
 
+    def rpc_get_nodes_latest_status(params):
+        """common:getNodesLatestStatus — 主题实时状态轮询用：返回各节点最新一条上报记录。
+
+        返回 {uuid: record}，record 为嵌套格式并附带 online 布尔值；
+        主题据此刷新节点卡片实时数据，失败时会显示“实时状态同步异常”警告。
+        """
+        params = params or {}
+        uuids = params.get("uuids") or []
+        if uuids:
+            clients = [store.get_client(u) for u in uuids]
+            clients = [c for c in clients if c]
+        else:
+            clients = store.list_clients()
+        out = {}
+        for c in clients:
+            if c.get("hidden"):
+                continue
+            r = store.latest_record(c["uuid"])
+            if not r:
+                continue
+            rec = _report_from_record(c["uuid"], r)
+            rec["online"] = _is_online(c)
+            out[c["uuid"]] = rec
+        return out
+
     RPC_METHODS = {
         "public:getNodesInformation": rpc_get_nodes_information,
         "public:getPublicSettings": rpc_get_public_settings,
@@ -1021,8 +1048,10 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         "public:getPublicPingTasks": rpc_get_public_ping_tasks,
         "public:getPingMetricStats": rpc_get_ping_metric_stats,
         "public:getPingRecords": rpc_get_ping_records,
+        "common:getNodesLatestStatus": rpc_get_nodes_latest_status,
         # legacy aliases
         "getNodesInformation": rpc_get_nodes_information,
+        "getNodesLatestStatus": rpc_get_nodes_latest_status,
         "queryMetrics": rpc_query_metrics,
     }
 
