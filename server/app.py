@@ -27,6 +27,7 @@ JSON-RPC methods implemented:
 """
 import functools
 import json
+import math
 import os
 import re
 import secrets
@@ -81,7 +82,13 @@ METRIC_DEFS = {
     "process.count":    {"type": "gauge",   "unit": "count", "description": "Process count"},
     "connections.tcp":  {"type": "gauge",   "unit": "count", "description": "TCP connections"},
     "connections.udp":  {"type": "gauge",   "unit": "count", "description": "UDP connections"},
+    # ping 探测指标（主控侧探测，供主题延迟曲线使用）
+    "ping.latency_ms":  {"type": "gauge",   "unit": "ms",   "description": "Ping latency (avg of successful probes)"},
+    "ping.loss":        {"type": "gauge",   "unit": "%",    "description": "Ping packet loss ratio"},
 }
+
+# ping 指标键集合（queryMetrics 走探测结果表而非 records 表）
+PING_METRIC_KEYS = {"ping.latency_ms", "ping.loss"}
 
 # record column -> metric key
 RECORD_METRIC_MAP = {
@@ -695,12 +702,16 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             hours = float(params.get("hours") or 4)
             start = end - timedelta(hours=hours)
         max_points = int(params.get("max_points") or 500)
+        task_id = params.get("task_id") or (params.get("tags") or {}).get("task_id")
 
         series = []
         for key in keys:
             if key not in METRIC_DEFS:
                 raise ValueError(f"unknown metric key: {key}")
-            series.extend(_query_series(key, entity_ids, start, end, max_points))
+            if key in PING_METRIC_KEYS:
+                series.extend(_ping_series(key, entity_ids, start, end, max_points, task_id))
+            else:
+                series.extend(_query_series(key, entity_ids, start, end, max_points))
         return {
             "start": _iso(start),
             "end": _iso(end),
@@ -758,7 +769,110 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         ]
 
     def rpc_get_public_ping_tasks(params):
-        return []
+        # Komari 形状的公开延迟任务列表（主题 ping 功能用 id/name/target/type/interval）
+        return [
+            {
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "target": t.get("target"),
+                "type": t.get("type"),
+                "interval": int(t.get("interval_sec") or 60),
+                "enabled": bool(t.get("enabled")),
+            }
+            for t in store.list_ping_tasks()
+        ]
+
+    def _ping_task_nodes(task, clients):
+        """探测任务关联的节点：目标中包含节点 IP 即视为该节点的延迟探测。"""
+        target = str(task.get("target") or "")
+        out = []
+        for c in clients:
+            ips = {str(c.get("ipv4") or ""), str(c.get("ipv6") or "")} - {""}
+            if any(ip and ip in target for ip in ips):
+                out.append(c)
+        return out
+
+    def _pct(sorted_vals, p):
+        """已排序序列的百分位数（线性插值）。"""
+        if not sorted_vals:
+            return None
+        if len(sorted_vals) == 1:
+            return float(sorted_vals[0])
+        k = (len(sorted_vals) - 1) * p / 100.0
+        f = math.floor(k)
+        c = math.ceil(k)
+        if f == c:
+            return float(sorted_vals[int(k)])
+        return float(sorted_vals[f] + (sorted_vals[c] - sorted_vals[f]) * (k - f))
+
+    def _ping_series(metric_key, entity_ids, start, end, max_points, task_id=None):
+        """为 queryMetrics 构造 ping.latency_ms / ping.loss 曲线序列。
+
+        按 (任务, 节点) 输出 series：entity_id=节点 uuid，tags.task_id=任务 id，
+        points 按时间分桶聚合（latency 取成功样本均值，无成功样本记 -1；
+        loss 记丢包百分比）。"""
+        tasks = store.list_ping_tasks()
+        if task_id not in (None, ""):
+            tasks = [t for t in tasks if str(t.get("id")) == str(task_id)]
+        clients = store.list_clients()
+        if entity_ids:
+            wanted = set(entity_ids)
+            clients = [c for c in clients if c.get("uuid") in wanted]
+        else:
+            clients = [c for c in clients if not c.get("hidden")]
+        span = (end - start).total_seconds()
+        if span <= 0 or max_points <= 0:
+            return []
+        bucket = span / max_points
+        start_ts = start.timestamp()
+        end_iso = _iso(end)
+        series = []
+        for t in tasks:
+            nodes = _ping_task_nodes(t, clients)
+            if not nodes:
+                continue
+            rows = store.ping_results(t.get("id"), _iso(start), limit=200000)
+            rows = [r for r in rows if (r.get("time") or "") <= end_iso
+                    and _parse_time(r.get("time")) is not None]
+            if not rows:
+                continue
+            buckets = {}  # idx -> [total, ok_count, latency_sum]
+            for r in rows:
+                ts = _parse_time(r.get("time")).timestamp()
+                idx = int((ts - start_ts) / bucket)
+                idx = max(0, min(max_points - 1, idx))
+                b = buckets.setdefault(idx, [0, 0, 0.0])
+                b[0] += 1
+                lat = r.get("latency_ms")
+                if r.get("ok") and lat is not None:
+                    b[1] += 1
+                    b[2] += float(lat)
+            points = []
+            for idx in sorted(buckets):
+                total, okc, latsum = buckets[idx]
+                bt = _iso(start + timedelta(seconds=idx * bucket))
+                if metric_key == "ping.latency_ms":
+                    value = round(latsum / okc, 2) if okc else -1
+                else:  # ping.loss
+                    value = round((total - okc) / total * 100, 2) if total else 0.0
+                points.append({"time": bt, "value": value, "count": total})
+            if not points:
+                continue
+            for n in nodes:
+                series.append({
+                    "metric_key": metric_key,
+                    "entity_id": n.get("uuid"),
+                    "tags": {"task_id": str(t.get("id"))},
+                    "type": METRIC_DEFS[metric_key]["type"],
+                    "unit": METRIC_DEFS[metric_key]["unit"],
+                    "interval_seconds": int(t.get("interval_sec") or 60),
+                    "downsampled": False,
+                    "fill_empty": False,
+                    "max_points": max_points,
+                    "count": len(points),
+                    "points": [dict(p) for p in points],
+                })
+        return series
 
     def _ping_records_payload(uuid="", task_id="", hours="4"):
         """Komari 形状的延迟记录：{count, records[{task_id,time,value,client}], tasks}。
@@ -785,7 +899,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 tasks = [t for t in tasks
                          if any(ip and ip in str(t.get("target") or "") for ip in ips)]
         records = []
+        all_clients = store.list_clients()
         for t in tasks:
+            # uuid 查询时 client 直接用所查节点，保证主题按节点归并统计正确
+            if uuid:
+                client_uuid = uuid
+            else:
+                nodes = _ping_task_nodes(t, all_clients)
+                client_uuid = nodes[0].get("uuid") if nodes else ""
             for r in store.ping_results(t.get("id"), since, limit=2000):
                 ok = bool(r.get("ok"))
                 lat = r.get("latency_ms")
@@ -793,22 +914,83 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                     "task_id": t.get("id"),
                     "time": r.get("time"),
                     "value": int(round(lat)) if (ok and lat is not None) else -1,
+                    "client": client_uuid,
                 })
         records.sort(key=lambda r: r.get("time") or "")
         return {
             "count": len(records),
             "records": records,
             "tasks": [{"id": t.get("id"), "name": t.get("name"),
-                       "target": t.get("target"), "type": t.get("type")} for t in tasks],
+                       "target": t.get("target"), "type": t.get("type"),
+                       "interval": int(t.get("interval_sec") or 60)} for t in tasks],
         }
 
     def rpc_get_ping_metric_stats(params):
+        """Komari 形状的延迟统计：按 (任务, 节点) 返回 total/valid/loss/min/max/
+        avg/latest/p50/p99/stddev，供主题延迟曲线与统计表使用。"""
         now = datetime.now(timezone.utc)
         params = params or {}
-        hours = float(params.get("hours") or 1)
+        hours = float(params.get("hours") or 4)
         start = _parse_time(params.get("start") or params.get("start_time")) or (now - timedelta(hours=hours))
         end = _parse_time(params.get("end") or params.get("end_time")) or now
-        return {"start": _iso(start), "end": _iso(end), "stats": [], "count": 0}
+        entity_ids = params.get("entity_ids") or []
+        if params.get("entity_id"):
+            entity_ids = [params["entity_id"]] + entity_ids
+        task_id = params.get("task_id") or (params.get("tags") or {}).get("task_id")
+        tasks = store.list_ping_tasks()
+        if task_id not in (None, ""):
+            tasks = [t for t in tasks if str(t.get("id")) == str(task_id)]
+        clients = store.list_clients()
+        if entity_ids:
+            wanted = set(entity_ids)
+            clients = [c for c in clients if c.get("uuid") in wanted]
+        else:
+            clients = [c for c in clients if not c.get("hidden")]
+        end_iso = _iso(end)
+        stats = []
+        for t in tasks:
+            nodes = _ping_task_nodes(t, clients)
+            if not nodes:
+                continue
+            rows = store.ping_results(t.get("id"), _iso(start), limit=200000)
+            rows = [r for r in rows if (r.get("time") or "") <= end_iso]
+            total = len(rows)
+            oks = [float(r["latency_ms"]) for r in rows
+                   if r.get("ok") and r.get("latency_ms") is not None]
+            valid = len(oks)
+            loss = round((total - valid) / total * 100, 2) if total else 0.0
+            if oks:
+                srt = sorted(oks)
+                avg = sum(oks) / valid
+                p50 = _pct(srt, 50)
+                p99 = _pct(srt, 99)
+                var = sum((x - avg) ** 2 for x in oks) / valid
+                entry_stats = {
+                    "min": round(srt[0], 2), "max": round(srt[-1], 2),
+                    "avg": round(avg, 2), "latest": round(oks[-1], 2),
+                    "p50": round(p50, 2), "p99": round(p99, 2),
+                    "stddev": round(math.sqrt(var), 2),
+                    "p99_p50_ratio": round(p99 / p50, 4) if p50 else None,
+                }
+            else:
+                entry_stats = {
+                    "min": None, "max": None, "avg": None, "latest": None,
+                    "p50": None, "p99": None, "stddev": None,
+                    "p99_p50_ratio": None,
+                }
+            for n in nodes:
+                stats.append({
+                    "task_id": t.get("id"),
+                    "entity_id": n.get("uuid"),
+                    "name": t.get("name"),
+                    "type": t.get("type"),
+                    "interval": int(t.get("interval_sec") or 60),
+                    "total": total,
+                    "valid": valid,
+                    "loss": loss,
+                    **entry_stats,
+                })
+        return {"start": _iso(start), "end": _iso(end), "stats": stats, "count": len(stats)}
 
     def rpc_get_ping_records(params):
         return _ping_records_payload(
