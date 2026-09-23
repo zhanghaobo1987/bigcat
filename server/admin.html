@@ -6,21 +6,36 @@
 <title>bigcat 后台管理</title>
 <style>
   :root { --bg:#0b0f14; --card:#131a23; --border:#232d3a; --text:#e6edf3;
-          --muted:#8b98a9; --accent:#2f81f7; --danger:#f85149; --ok:#3fb950; }
+          --muted:#8b98a9; --accent:#2f81f7; --danger:#f85149; --ok:#3fb950; --warn:#d29922; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
-  .wrap { max-width:880px; margin:0 auto; padding:32px 16px 64px; }
+  .layout { display:flex; min-height:100vh; }
+  aside { width:210px; flex-shrink:0; background:#0d131b; border-right:1px solid var(--border);
+          padding:20px 12px; position:sticky; top:0; height:100vh; overflow-y:auto; }
+  aside h1 { font-size:17px; margin:0 0 4px 8px; }
+  aside .ver { font-size:11px; color:var(--muted); margin:0 0 16px 8px; }
+  aside nav button { display:block; width:100%; text-align:left; background:transparent;
+          border:0; color:var(--muted); padding:10px 12px; border-radius:8px; font-size:14px; cursor:pointer; }
+  aside nav button:hover { background:#161e29; color:var(--text); }
+  aside nav button.active { background:#1c2942; color:var(--accent); }
+  aside nav button .ico { margin-right:8px; }
+  main { flex:1; padding:28px; max-width:980px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
-          padding:24px; margin-bottom:16px; }
-  h1 { font-size:20px; margin:0 0 4px; }
+          padding:20px; margin-bottom:16px; }
   h2 { font-size:16px; margin:0 0 12px; }
   .muted { color:var(--muted); font-size:13px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .stat .num { font-size:26px; font-weight:700; }
+  .stat .lbl { color:var(--muted); font-size:12px; margin-top:4px; }
+  .num.ok { color:var(--ok); } .num.bad { color:var(--danger); }
   label { display:block; margin:12px 0 4px; color:var(--muted); font-size:13px; }
-  input[type=text], input[type=password] {
+  input[type=text], input[type=password], input[type=number], select {
     width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--border);
     background:#0d131b; color:var(--text); font-size:14px; }
-  input:focus { outline:none; border-color:var(--accent); }
+  input:focus, select:focus { outline:none; border-color:var(--accent); }
+  input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); }
   button { cursor:pointer; border:0; border-radius:8px; padding:9px 18px;
            font-size:14px; background:var(--accent); color:#fff; }
   button:hover { filter:brightness(1.1); }
@@ -29,9 +44,6 @@
   button.small { padding:5px 10px; font-size:12px; }
   .err { color:var(--danger); font-size:13px; min-height:20px; margin-top:8px; }
   .ok { color:var(--ok); font-size:13px; margin-top:8px; }
-  header.top { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
-  .tabs { display:flex; gap:8px; margin-bottom:16px; }
-  .tabs button.ghost.active { border-color:var(--accent); color:var(--accent); }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); }
   th { color:var(--muted); font-weight:500; }
@@ -39,85 +51,207 @@
              border-radius:8px; padding:10px 12px; font-size:12px; word-break:break-all;
              margin:8px 0; user-select:all; }
   .row { display:flex; gap:8px; align-items:center; }
-  .row input { flex:1; }
+  .row input, .row select { flex:1; }
   .token { font-family:monospace; font-size:12px; }
   .hidden { display:none !important; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:12px; }
+  .badge.on { background:rgba(63,185,80,.15); color:var(--ok); }
+  .badge.off { background:rgba(248,81,73,.15); color:var(--danger); }
+  pre.logs { background:#0d131b; border:1px solid var(--border); border-radius:8px;
+             padding:12px; font-size:12px; max-height:480px; overflow:auto; white-space:pre-wrap; }
   .center { max-width:400px; margin:8vh auto 0; }
-  .center h1 { text-align:center; margin-bottom:16px; }
+  .center h1 { text-align:center; margin-bottom:16px; font-size:20px; }
+  .kv { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .kv span:first-child { color:var(--muted); }
+  .kv span:last-child { font-family:monospace; }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:16px; }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex;
+              align-items:center; justify-content:center; z-index:50; }
+  .modal { background:var(--card); border:1px solid var(--border); border-radius:12px;
+           padding:24px; width:min(440px,92vw); }
+  @media (max-width:760px) {
+    .layout { flex-direction:column; }
+    aside { width:100%; height:auto; position:static; padding:12px; }
+    aside nav { display:flex; overflow-x:auto; gap:4px; }
+    aside nav button { white-space:nowrap; width:auto; }
+    aside h1, aside .ver { margin-left:4px; }
+    main { padding:16px; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
 
-  <!-- 登录 / 初始化 -->
-  <div id="view-auth" class="card center hidden">
-    <h1>🐱 bigcat 后台</h1>
-    <div id="auth-setup">
-      <p class="muted">首次使用，请创建管理员账号。</p>
-      <label>管理员用户名</label>
-      <input id="setup-user" type="text" value="admin" autocomplete="username">
-      <label>密码</label>
-      <input id="setup-pass1" type="password" autocomplete="new-password">
-      <label>确认密码</label>
-      <input id="setup-pass2" type="password" autocomplete="new-password">
-      <div class="err" id="setup-err"></div>
-      <button id="btn-setup" style="width:100%;margin-top:8px">创建并登录</button>
-    </div>
-    <div id="auth-login" class="hidden">
-      <label>用户名</label>
-      <input id="login-user" type="text" value="admin" autocomplete="username">
-      <label>密码</label>
-      <input id="login-pass" type="password" autocomplete="current-password">
-      <div class="err" id="login-err"></div>
-      <button id="btn-login" style="width:100%;margin-top:8px">登录</button>
-    </div>
+<!-- 登录 / 初始化 -->
+<div id="view-auth" class="card center hidden" style="margin:8vh auto;max-width:400px">
+  <h1>🐱 bigcat 后台</h1>
+  <div id="auth-setup">
+    <p class="muted">首次使用，请创建管理员账号。</p>
+    <label>管理员用户名</label>
+    <input id="setup-user" type="text" value="admin" autocomplete="username">
+    <label>密码</label>
+    <input id="setup-pass1" type="password" autocomplete="new-password">
+    <label>确认密码</label>
+    <input id="setup-pass2" type="password" autocomplete="new-password">
+    <div class="err" id="setup-err"></div>
+    <button id="btn-setup" style="width:100%;margin-top:8px">创建并登录</button>
   </div>
-
-  <!-- 主面板 -->
-  <div id="view-main" class="hidden">
-    <header class="top">
-      <div><h1>🐱 bigcat 后台管理</h1><span class="muted" id="hello"></span></div>
-      <button class="ghost small" id="btn-logout">退出登录</button>
-    </header>
-    <div class="tabs">
-      <button class="ghost active" data-tab="nodes">节点管理</button>
-      <button class="ghost" data-tab="settings">站点设置</button>
-    </div>
-
-    <div class="card" id="tab-nodes">
-      <h2>节点列表</h2>
-      <table>
-        <thead><tr><th>名称</th><th>UUID</th><th>Token</th><th>操作</th></tr></thead>
-        <tbody id="nodes-body"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
-      </table>
-      <h2 style="margin-top:20px">添加节点</h2>
-      <div class="row">
-        <input id="new-node-name" type="text" placeholder="节点名称（例如 香港-01）">
-        <button id="btn-add-node">添加</button>
-      </div>
-      <div id="new-node-result"></div>
-    </div>
-
-    <div class="card hidden" id="tab-settings">
-      <h2>站点设置</h2>
-      <label>站点名称</label>
-      <input id="set-sitename" type="text">
-      <label>站点描述</label>
-      <input id="set-desc" type="text">
-      <div class="ok" id="settings-ok"></div>
-      <div class="err" id="settings-err"></div>
-      <button id="btn-save-settings" style="margin-top:12px">保存</button>
-    </div>
+  <div id="auth-login" class="hidden">
+    <label>用户名</label>
+    <input id="login-user" type="text" value="admin" autocomplete="username">
+    <label>密码</label>
+    <input id="login-pass" type="password" autocomplete="current-password">
+    <div class="err" id="login-err"></div>
+    <button id="btn-login" style="width:100%;margin-top:8px">登录</button>
   </div>
-
 </div>
-<footer style="text-align:center;color:var(--muted);font-size:12px" id="ver-foot"></footer>
+
+<!-- 主界面 -->
+<div id="view-main" class="layout hidden">
+  <aside>
+    <h1>🐱 bigcat</h1>
+    <p class="ver" id="side-ver"></p>
+    <nav id="nav"></nav>
+    <div style="margin-top:16px;padding:0 8px">
+      <button class="ghost small" id="btn-logout" style="width:100%">退出登录</button>
+    </div>
+  </aside>
+  <main>
+    <section id="page-dashboard" class="page">
+      <div class="grid" id="dash-stats"></div>
+      <div class="card">
+        <h2>离线节点 <span class="muted" id="dash-th"></span></h2>
+        <div id="dash-offline"><p class="muted">加载中…</p></div>
+      </div>
+    </section>
+
+    <section id="page-servers" class="page hidden">
+      <div class="card">
+        <h2>服务器</h2>
+        <table>
+          <thead><tr><th>状态</th><th>名称</th><th>分组</th><th>最后上报</th><th>Token</th><th>操作</th></tr></thead>
+          <tbody id="nodes-body"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>添加节点</h2>
+        <div class="row">
+          <input id="new-node-name" type="text" placeholder="节点名称（例如 香港-01）">
+          <button id="btn-add-node">添加</button>
+        </div>
+        <div id="new-node-result"></div>
+      </div>
+    </section>
+
+    <section id="page-settings" class="page hidden">
+      <div class="card">
+        <h2>站点设置</h2>
+        <label>站点名称</label><input id="set-sitename" type="text">
+        <label>站点描述</label><input id="set-desc" type="text">
+        <label>离线判定（秒）：超过此时长未上报即视为离线</label>
+        <input id="set-offline-th" type="number" min="30" max="3600" step="10">
+        <label>监控数据保留（小时）</label>
+        <input id="set-keep-hours" type="number" min="1" max="720">
+        <div class="ok" id="settings-ok"></div><div class="err" id="settings-err"></div>
+        <button id="btn-save-settings" style="margin-top:12px">保存</button>
+      </div>
+    </section>
+
+    <section id="page-notify" class="page hidden">
+      <div class="card">
+        <h2>离线 / 上线通知</h2>
+        <p class="muted">节点状态变化（离线 / 恢复在线）时，向下方 Webhook 地址 POST JSON <code>{"text": "..."}</code>。
+        兼容 Bark / Server 酱 / 企业微信机器人等可接收 JSON 的推送服务。</p>
+        <label class="row" style="justify-content:flex-start">
+          <input id="notify-enabled" type="checkbox" style="width:16px"> <span>启用通知</span>
+        </label>
+        <label>Webhook URL</label>
+        <input id="notify-webhook" type="text" placeholder="https://…">
+        <div class="ok" id="notify-ok"></div><div class="err" id="notify-err"></div>
+        <div class="row" style="margin-top:12px;justify-content:flex-start">
+          <button id="btn-save-notify">保存</button>
+          <button class="ghost" id="btn-test-notify">发送测试</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-sessions" class="page hidden">
+      <div class="card">
+        <h2>会话管理</h2>
+        <div id="sess-info"><p class="muted">加载中…</p></div>
+        <button class="danger" id="btn-revoke-sess" style="margin-top:12px">退出所有会话（含本机）</button>
+        <p class="muted">使所有已登录后台的设备全部失效，需重新登录。</p>
+      </div>
+    </section>
+
+    <section id="page-account" class="page hidden">
+      <div class="card">
+        <h2>账户</h2>
+        <p class="muted">当前管理员：<b id="acc-current"></b></p>
+        <label>新用户名（不改请留空，改用户名需同时设新密码）</label>
+        <input id="acc-user" type="text" autocomplete="username">
+        <label>新密码（不改请留空）</label>
+        <input id="acc-pass1" type="password" autocomplete="new-password">
+        <label>确认新密码</label>
+        <input id="acc-pass2" type="password" autocomplete="new-password">
+        <label>当前密码（必填）</label>
+        <input id="acc-cur" type="password" autocomplete="current-password">
+        <div class="ok" id="acc-ok"></div><div class="err" id="acc-err"></div>
+        <button id="btn-save-acc" style="margin-top:12px">保存</button>
+      </div>
+    </section>
+
+    <section id="page-logs" class="page hidden">
+      <div class="card">
+        <h2>日志</h2>
+        <div class="row" style="margin-bottom:12px">
+          <select id="log-lines" style="max-width:160px">
+            <option value="100">最近 100 行</option>
+            <option value="200" selected>最近 200 行</option>
+            <option value="500">最近 500 行</option>
+          </select>
+          <button class="ghost" id="btn-refresh-logs">刷新</button>
+        </div>
+        <p class="muted" id="log-src"></p>
+        <pre class="logs" id="log-body">加载中…</pre>
+      </div>
+    </section>
+
+    <section id="page-about" class="page hidden">
+      <div class="card">
+        <h2>关于</h2>
+        <div id="about-body"><p class="muted">加载中…</p></div>
+      </div>
+      <div class="card">
+        <h2>路线图</h2>
+        <p class="muted">以下 Komari 后台功能需要 agent 协议升级，暂未实现：远程执行、延迟监测任务、终端、文件管理、插件系统。欢迎在 GitHub 提需求。</p>
+      </div>
+    </section>
+
+    <footer id="ver-foot"></footer>
+  </main>
+</div>
+
+<!-- 编辑节点弹窗 -->
+<div id="modal-edit" class="modal-bg hidden">
+  <div class="modal">
+    <h2>编辑节点</h2>
+    <input id="edit-uuid" type="hidden">
+    <label>名称</label><input id="edit-name" type="text">
+    <label>分组</label><input id="edit-group" type="text" placeholder="例如 香港">
+    <label>备注</label><input id="edit-remark" type="text">
+    <label class="row" style="justify-content:flex-start">
+      <input id="edit-hidden" type="checkbox" style="width:16px"> <span>在前台隐藏此节点</span>
+    </label>
+    <div class="err" id="edit-err"></div>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button class="ghost" id="btn-edit-cancel">取消</button>
+      <button id="btn-edit-save">保存</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
-fetch('/api/version').then(r => r.json()).then(d => {
-  if (d && d.version) $('ver-foot').textContent = 'bigcat v' + d.version;
-}).catch(() => {});
 async function api(path, method, body) {
   const r = await fetch(path, {
     method: method || 'GET', credentials: 'same-origin',
@@ -128,8 +262,26 @@ async function api(path, method, body) {
   try { d = await r.json(); } catch(e) {}
   return {status: r.status, data: d};
 }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtSize(b) {
+  if (b == null) return '-';
+  const u = ['B','KB','MB','GB']; let i = 0;
+  while (b >= 1024 && i < 3) { b /= 1024; i++; }
+  return b.toFixed(2) + ' ' + u[i];
+}
+function fmtTime(iso) {
+  if (!iso) return '从未';
+  const d = new Date(iso); if (isNaN(d)) return iso;
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return s + ' 秒前';
+  if (s < 3600) return Math.floor(s/60) + ' 分钟前';
+  if (s < 86400) return Math.floor(s/3600) + ' 小时前';
+  return Math.floor(s/86400) + ' 天前';
+}
 function show(id) {
-  ['view-auth','view-main'].forEach(v => $(v).classList.add('hidden'));
+  ['view-auth'].forEach(v => $(v).classList.add('hidden'));
+  $('view-main').classList.add('hidden');
   $(id).classList.remove('hidden');
 }
 function needLogin() {
@@ -138,7 +290,29 @@ function needLogin() {
   $('auth-login').classList.remove('hidden');
 }
 
-/* ---------- 初始化 ---------- */
+/* ---------------- 菜单 ---------------- */
+const PAGES = [
+  ['dashboard', '📊', '仪表板'], ['servers', '🖥️', '服务器'],
+  ['settings', '⚙️', '设置'], ['notify', '🔔', '通知'],
+  ['sessions', '👥', '会话管理'], ['account', '👤', '账户'],
+  ['logs', '📜', '日志'], ['about', 'ℹ️', '关于'],
+];
+let curPage = 'dashboard';
+function buildNav() {
+  $('nav').innerHTML = PAGES.map(([k, ico, name]) =>
+    `<button data-p="${k}" class="${k===curPage?'active':''}"><span class="ico">${ico}</span>${name}</button>`).join('');
+  document.querySelectorAll('#nav button').forEach(b => b.onclick = () => go(b.dataset.p));
+}
+function go(p) {
+  curPage = p; buildNav();
+  document.querySelectorAll('.page').forEach(x => x.classList.add('hidden'));
+  $('page-' + p).classList.remove('hidden');
+  ({dashboard: loadDashboard, servers: loadNodes, settings: loadSettings,
+    notify: loadNotify, sessions: loadSessions, account: loadAccount,
+    logs: loadLogs, about: loadAbout}[p] || (() => {}))();
+}
+
+/* ---------------- 初始化 ---------------- */
 (async function init() {
   const {data} = await api('/api/admin/status');
   if (!data.has_admin) {
@@ -150,9 +324,13 @@ function needLogin() {
   } else {
     enterMain(data);
   }
+  const v = await api('/api/version');
+  if (v.data && v.data.version) {
+    $('side-ver').textContent = 'v' + v.data.version;
+    $('ver-foot').textContent = 'bigcat v' + v.data.version;
+  }
 })();
 
-/* ---------- 创建管理员 ---------- */
 $('btn-setup').onclick = async () => {
   const u = $('setup-user').value.trim() || 'admin';
   const p1 = $('setup-pass1').value, p2 = $('setup-pass2').value;
@@ -160,72 +338,108 @@ $('btn-setup').onclick = async () => {
   if (!p1) { $('setup-err').textContent = '密码不能为空'; return; }
   if (p1 !== p2) { $('setup-err').textContent = '两次密码不一致'; return; }
   const {status, data} = await api('/api/admin/setup', 'POST', {username: u, password: p1});
-  if (status === 200 && data.ok) { enterMain({}); }
-  else { $('setup-err').textContent = data.error || ('失败 (' + status + ')'); }
+  if (status === 200 && data.ok) enterMain({});
+  else $('setup-err').textContent = data.error || ('失败 (' + status + ')');
 };
-
-/* ---------- 登录 / 退出 ---------- */
 $('btn-login').onclick = async () => {
   const u = $('login-user').value.trim(), p = $('login-pass').value;
   $('login-err').textContent = '';
   const {status, data} = await api('/api/admin/login', 'POST', {username: u, password: p});
-  if (status === 200 && data.ok) { enterMain(data); }
-  else { $('login-err').textContent = '用户名或密码错误'; }
+  if (status === 200 && data.ok) enterMain(data);
+  else $('login-err').textContent = '用户名或密码错误';
 };
 $('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
 $('btn-logout').onclick = async () => { await api('/api/admin/logout', 'POST'); needLogin(); };
 
-/* ---------- 主面板 ---------- */
 function enterMain(data) {
   show('view-main');
-  if (data.username) $('hello').textContent = '当前登录：' + data.username;
-  loadNodes(); loadSettings();
+  buildNav(); go('dashboard');
 }
-document.querySelectorAll('.tabs button').forEach(b => {
-  b.onclick = () => {
-    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
-    b.classList.add('active');
-    $('tab-nodes').classList.toggle('hidden', b.dataset.tab !== 'nodes');
-    $('tab-settings').classList.toggle('hidden', b.dataset.tab !== 'settings');
-  };
-});
 
-/* ---------- 节点 ---------- */
-function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
-  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+/* ---------------- 仪表板 ---------------- */
+async function loadDashboard() {
+  const {status, data} = await api('/api/admin/dashboard');
+  if (status === 401) return needLogin();
+  $('dash-stats').innerHTML = `
+    <div class="stat"><div class="num">${data.total}</div><div class="lbl">节点总数</div></div>
+    <div class="stat"><div class="num ok">${data.online}</div><div class="lbl">在线</div></div>
+    <div class="stat"><div class="num ${data.offline ? 'bad' : ''}">${data.offline}</div><div class="lbl">离线</div></div>
+    <div class="stat"><div class="num">${fmtSize(data.db_size)}</div><div class="lbl">数据库占用</div></div>
+    <div class="stat"><div class="num">${data.records}</div><div class="lbl">监控记录数</div></div>
+    <div class="stat"><div class="num">${data.reports_today}</div><div class="lbl">今日上报次数</div></div>`;
+  $('dash-th').textContent = `（${data.offline_threshold} 秒未上报视为离线）`;
+  $('dash-offline').innerHTML = data.offline_nodes.length
+    ? `<table><thead><tr><th>节点</th><th>最后上报</th></tr></thead><tbody>` +
+      data.offline_nodes.map(n => `<tr><td>${esc(n.name)}</td><td>${fmtTime(n.last_report_at)} <span class="muted">${esc(n.last_report_at||'')}</span></td></tr>`).join('') +
+      `</tbody></table>`
+    : '<p class="muted">全部节点在线 🎉</p>';
+}
+
+/* ---------------- 服务器 ---------------- */
+let nodesCache = [];
 async function loadNodes() {
-  const {status, data} = await api('/api/admin/clients');
-  if (status === 401) { needLogin(); return; }
+  const {status, data} = await api('/api/admin/dashboard');
+  if (status === 401) return needLogin();
+  const {data: clients, status: s2} = await api('/api/admin/clients');
+  if (s2 === 401) return needLogin();
+  const onMap = {}; (data.nodes || []).forEach(n => onMap[n.uuid] = n);
+  nodesCache = clients;
   const tb = $('nodes-body');
-  if (!data.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">暂无节点，点击下方添加。</td></tr>'; return; }
-  tb.innerHTML = data.map(c => {
-    const shortUuid = esc(c.uuid).slice(0, 8);
-    const masked = '••••••••' + esc(c.token).slice(-6);
-    return '<tr><td>' + esc(c.name || '(未命名)') + '</td>' +
-      '<td class="token">' + shortUuid + '</td>' +
-      '<td><span class="token" id="tok-' + esc(c.uuid) + '">' + masked + '</span> ' +
-      '<button class="ghost small" onclick="toggleToken(\'' + esc(c.uuid) + '\',\'' + esc(c.token) + '\')">显示</button> ' +
-      '<button class="ghost small" onclick="copyText(\'' + esc(c.token) + '\')">复制</button></td>' +
-      '<td><button class="danger small" onclick="delNode(\'' + esc(c.uuid) + '\',\'' + esc(c.name || '') + '\')">删除</button></td></tr>';
+  if (!clients.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">暂无节点，点击下方添加。</td></tr>'; return; }
+  tb.innerHTML = clients.map(c => {
+    const on = onMap[c.uuid] ? onMap[c.uuid].online : null;
+    const masked = '••••••••' + String(c.token || '').slice(-6);
+    return `<tr>
+      <td>${on === null ? '-' : `<span class="badge ${on?'on':'off'}">${on?'在线':'离线'}</span>`}</td>
+      <td>${esc(c.name || '(未命名)')}${c.hidden ? ' <span class="muted">(隐藏)</span>' : ''}</td>
+      <td>${esc(c.group || '-')}</td>
+      <td>${fmtTime(c.last_report_at)}</td>
+      <td><span class="token" id="tok-${esc(c.uuid)}">${masked}</span>
+        <button class="ghost small" onclick="toggleToken('${esc(c.uuid)}','${esc(c.token)}')">显示</button>
+        <button class="ghost small" onclick="copyText('${esc(c.token)}')">复制</button></td>
+      <td><button class="ghost small" onclick='openEdit(${JSON.stringify(c.uuid)})'>编辑</button>
+        <button class="danger small" onclick="delNode('${esc(c.uuid)}','${esc(c.name||'')}')">删除</button></td></tr>`;
   }).join('');
 }
 window.toggleToken = (uuid, token) => {
   const el = $('tok-' + uuid);
   el.textContent = (el.textContent === token) ? ('••••••••' + token.slice(-6)) : token;
 };
-window.copyText = t => {
-  navigator.clipboard.writeText(t).then(() => alert('已复制'));
-};
+window.copyText = t => navigator.clipboard.writeText(t).then(() => alert('已复制'));
 window.delNode = async (uuid, name) => {
-  if (!confirm('确定删除节点「' + (name || uuid.slice(0,8)) + '」吗？')) return;
+  if (!confirm('确定删除节点「' + (name || uuid.slice(0,8)) + '」吗？其监控数据将一并删除。')) return;
   await api('/api/admin/client/' + uuid, 'DELETE');
   loadNodes();
+};
+window.openEdit = uuid => {
+  const c = nodesCache.find(x => x.uuid === uuid); if (!c) return;
+  $('edit-uuid').value = c.uuid;
+  $('edit-name').value = c.name || '';
+  $('edit-group').value = c.group || '';
+  $('edit-remark').value = c.remark || '';
+  $('edit-hidden').checked = !!c.hidden;
+  $('edit-err').textContent = '';
+  $('modal-edit').classList.remove('hidden');
+};
+$('btn-edit-cancel').onclick = () => $('modal-edit').classList.add('hidden');
+$('modal-edit').addEventListener('click', e => { if (e.target.id === 'modal-edit') $('modal-edit').classList.add('hidden'); });
+$('btn-edit-save').onclick = async () => {
+  const uuid = $('edit-uuid').value;
+  const {status, data} = await api('/api/admin/client/' + uuid, 'POST', {
+    name: $('edit-name').value.trim(),
+    group: $('edit-group').value.trim(),
+    remark: $('edit-remark').value.trim(),
+    hidden: $('edit-hidden').checked ? 1 : 0,
+  });
+  if (status === 401) return needLogin();
+  if (data && data.ok) { $('modal-edit').classList.add('hidden'); loadNodes(); }
+  else $('edit-err').textContent = '保存失败';
 };
 $('btn-add-node').onclick = async () => {
   const name = $('new-node-name').value.trim();
   const box = $('new-node-result');
   const {status, data} = await api('/api/admin/client/add', 'POST', {name});
-  if (status === 401) { needLogin(); return; }
+  if (status === 401) return needLogin();
   if (data && data.uuid) {
     const cmd = 'curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- agent ' +
       location.origin + ' ' + data.token;
@@ -234,25 +448,115 @@ $('btn-add-node').onclick = async () => {
       '<button class="ghost small" onclick="copyText(\'' + esc(cmd) + '\')">复制命令</button>';
     $('new-node-name').value = '';
     loadNodes();
-  } else {
-    box.innerHTML = '<div class="err">创建失败</div>';
-  }
+  } else box.innerHTML = '<div class="err">创建失败</div>';
 };
 
-/* ---------- 设置 ---------- */
+/* ---------------- 设置 ---------------- */
 async function loadSettings() {
   const {status, data} = await api('/api/admin/settings');
-  if (status === 401) return;
+  if (status === 401) return needLogin();
   $('set-sitename').value = data.sitename || '';
   $('set-desc').value = data.description || '';
+  $('set-offline-th').value = data.offline_threshold || 180;
+  $('set-keep-hours').value = data.record_keep_hours || 24;
 }
 $('btn-save-settings').onclick = async () => {
   $('settings-ok').textContent = ''; $('settings-err').textContent = '';
   const {status, data} = await api('/api/admin/settings', 'POST', {
-    sitename: $('set-sitename').value, description: $('set-desc').value });
-  if (status === 200 && data.ok) { $('settings-ok').textContent = '已保存'; }
-  else { $('settings-err').textContent = '保存失败'; }
+    sitename: $('set-sitename').value, description: $('set-desc').value,
+    offline_threshold: $('set-offline-th').value, record_keep_hours: $('set-keep-hours').value });
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) $('settings-ok').textContent = '已保存';
+  else $('settings-err').textContent = '保存失败';
 };
+
+/* ---------------- 通知 ---------------- */
+async function loadNotify() {
+  const {status, data} = await api('/api/admin/settings');
+  if (status === 401) return needLogin();
+  $('notify-enabled').checked = String(data.notify_enabled) === '1';
+  $('notify-webhook').value = data.notify_webhook || '';
+}
+$('btn-save-notify').onclick = async () => {
+  $('notify-ok').textContent = ''; $('notify-err').textContent = '';
+  const {status, data} = await api('/api/admin/settings', 'POST', {
+    notify_enabled: $('notify-enabled').checked ? '1' : '0',
+    notify_webhook: $('notify-webhook').value.trim() });
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) $('notify-ok').textContent = '已保存';
+  else $('notify-err').textContent = '保存失败';
+};
+$('btn-test-notify').onclick = async () => {
+  $('notify-ok').textContent = ''; $('notify-err').textContent = '';
+  const {status, data} = await api('/api/admin/notify/test', 'POST',
+    {webhook: $('notify-webhook').value.trim()});
+  if (status === 401) return needLogin();
+  if (data && data.ok) $('notify-ok').textContent = '测试消息已发送，请检查接收端';
+  else $('notify-err').textContent = (data && data.error) || '发送失败';
+};
+
+/* ---------------- 会话 ---------------- */
+async function loadSessions() {
+  const {status, data} = await api('/api/admin/sessions');
+  if (status === 401) return needLogin();
+  $('sess-info').innerHTML =
+    `<div class="kv"><span>当前会话 IP</span><span>${esc(data.current.ip || '-')}</span></div>
+     <div class="kv"><span>User-Agent</span><span>${esc(data.current.user_agent || '-')}</span></div>
+     <div class="kv"><span>状态</span><span>已登录</span></div>`;
+}
+$('btn-revoke-sess').onclick = async () => {
+  if (!confirm('确定退出所有会话吗？所有设备需重新登录。')) return;
+  const {status} = await api('/api/admin/sessions/revoke_all', 'POST');
+  if (status === 401) return needLogin();
+  alert('已使所有会话失效');
+};
+
+/* ---------------- 账户 ---------------- */
+async function loadAccount() {
+  const {status, data} = await api('/api/admin/status');
+  if (status === 401) return needLogin();
+  $('acc-current').textContent = data.username || 'admin';
+  ['acc-user','acc-pass1','acc-pass2','acc-cur'].forEach(id => $(id).value = '');
+  $('acc-ok').textContent = ''; $('acc-err').textContent = '';
+}
+$('btn-save-acc').onclick = async () => {
+  $('acc-ok').textContent = ''; $('acc-err').textContent = '';
+  const p1 = $('acc-pass1').value, p2 = $('acc-pass2').value;
+  if (p1 !== p2) { $('acc-err').textContent = '两次新密码不一致'; return; }
+  if (!p1 && !$('acc-user').value.trim()) { $('acc-err').textContent = '没有要修改的内容'; return; }
+  const {status, data} = await api('/api/admin/account', 'POST', {
+    username: $('acc-user').value.trim(), new_password: p1,
+    current_password: $('acc-cur').value });
+  if (status === 401) {
+    if (data && data.error) $('acc-err').textContent = data.error;
+    else needLogin();
+    return;
+  }
+  if (data && data.ok) { $('acc-ok').textContent = '已保存（用户名：' + esc(data.username) + '）'; loadAccount(); }
+  else $('acc-err').textContent = (data && data.error) || '保存失败';
+};
+
+/* ---------------- 日志 ---------------- */
+async function loadLogs() {
+  const {status, data} = await api('/api/admin/logs?lines=' + $('log-lines').value);
+  if (status === 401) return needLogin();
+  $('log-src').textContent = data.source ? ('来源：' + data.source) : '';
+  $('log-body').textContent = data.logs || (data.hint || '暂无日志');
+}
+$('btn-refresh-logs').onclick = loadLogs;
+
+/* ---------------- 关于 ---------------- */
+async function loadAbout() {
+  const {status, data} = await api('/api/admin/about');
+  if (status === 401) return needLogin();
+  const up = data.uptime_sec;
+  const upStr = Math.floor(up/86400) + ' 天 ' + Math.floor(up%86400/3600) + ' 小时 ' + Math.floor(up%3600/60) + ' 分钟';
+  $('about-body').innerHTML = [
+    ['bigcat 版本', 'v' + data.bigcat], ['Python', data.python], ['Flask', data.flask],
+    ['系统', data.platform], ['数据库', data.db_path + '（' + fmtSize(data.db_size) + '）'],
+    ['监控记录数', data.records], ['启动时间', data.started_at], ['运行时长', upStr],
+  ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(String(v))}</span></div>`).join('');
+}
 </script>
 </body>
 </html>

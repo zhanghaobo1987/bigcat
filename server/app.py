@@ -29,8 +29,12 @@ import functools
 import json
 import os
 import secrets
+import subprocess
+import threading
 import time
+import urllib.request
 from datetime import datetime, timedelta, timezone
+from importlib.metadata import version as _pkg_version
 
 from flask import Flask, jsonify, request, send_from_directory, session
 from flask_cors import CORS
@@ -53,6 +57,9 @@ VERSION = _read_version()
 VERSION_HASH = "bigcat"
 
 STATIC_DIR = "static"
+
+# 进程启动时间（用于 /api/admin/about 的运行时长）
+STARTED_AT = time.time()
 
 # Komari metric definitions (internal/metricstore)
 METRIC_DEFS = {
@@ -540,6 +547,15 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
         }
         store.insert_record(client["uuid"], rec)
         store.touch_client(client["uuid"])
+        # 离线/上线通知的状态变化检测 + 过期监控数据清理（无独立调度器，搭上报触发）
+        try:
+            _check_node_transitions()
+        except Exception:
+            pass
+        try:
+            _maybe_prune()
+        except Exception:
+            pass
         # update totals if agent reports them
         totals = {}
         if ram.get("total"):
@@ -558,11 +574,88 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             store.update_client(client["uuid"], totals)
         return jsonify({"ok": True})
 
+    # ------------------------------------------------------------ admin helpers
+    def _session_version() -> int:
+        try:
+            return int(store.get_setting("session_version", "0") or 0)
+        except Exception:
+            return 0
+
+    def _online_threshold() -> int:
+        try:
+            return max(30, min(3600, int(store.get_setting("offline_threshold", "180") or 180)))
+        except Exception:
+            return 180
+
+    def _is_online(c: dict) -> bool:
+        t = _parse_time(c.get("last_report_at"))
+        if not t:
+            return False
+        return (datetime.now(timezone.utc) - t).total_seconds() < _online_threshold()
+
+    def _post_webhook(url: str, text: str, timeout: int = 8) -> bool:
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"text": text}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return 200 <= resp.status < 300
+        except Exception:
+            return False
+
+    def _notify(text: str):
+        url = (store.get_setting("notify_webhook", "") or "").strip()
+        if not url:
+            return
+        threading.Thread(target=_post_webhook, args=(url, text), daemon=True).start()
+
+    def _check_node_transitions():
+        """Detect online/offline transitions on each agent report; notify on change."""
+        if (store.get_setting("notify_enabled", "0") or "0") != "1":
+            return
+        try:
+            prev = json.loads(store.get_setting("notify_state", "{}") or "{}")
+        except Exception:
+            prev = {}
+        cur, changed = {}, False
+        for c in store.list_clients():
+            online = _is_online(c)
+            cur[c["uuid"]] = "online" if online else "offline"
+            if c["uuid"] in prev and prev[c["uuid"]] != cur[c["uuid"]]:
+                name = c.get("name") or c["uuid"][:8]
+                _notify(f"🟢 bigcat：节点「{name}」恢复在线" if online
+                        else f"🔴 bigcat：节点「{name}」离线（超过 {_online_threshold()} 秒未上报）")
+            if prev.get(c["uuid"]) != cur[c["uuid"]]:
+                changed = True
+        if changed:
+            store.set_setting("notify_state", json.dumps(cur))
+
+    def _maybe_prune():
+        """Prune old records at most once per hour (no scheduler in Flask dev server)."""
+        try:
+            keep = max(1, min(720, int(store.get_setting("record_keep_hours", "24") or 24)))
+        except Exception:
+            keep = 24
+        try:
+            last = float(store.get_setting("last_prune_ts", "0") or 0)
+        except Exception:
+            last = 0
+        if time.time() - last < 3600:
+            return
+        store.set_setting("last_prune_ts", str(time.time()))
+        try:
+            store.prune_records(keep)
+        except Exception:
+            pass
+
     # ------------------------------------------------------------ admin API
     def _require_admin(fn):
         @functools.wraps(fn)
         def wrapper(*a, **kw):
-            if not session.get("admin"):
+            if not session.get("admin") or session.get("v") != _session_version():
                 return jsonify({"error": "login required"}), 401
             return fn(*a, **kw)
         return wrapper
@@ -579,6 +672,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             return jsonify({"error": "password required"}), 400
         store.set_admin(username, password)
         session["admin"] = True
+        session["v"] = _session_version()
         return jsonify({"ok": True, "username": username})
 
     @app.route("/api/admin/login", methods=["POST"])
@@ -586,6 +680,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
         data = request.get_json(force=True, silent=True) or {}
         if store.verify_admin(data.get("password", ""), data.get("username", "")):
             session["admin"] = True
+            session["v"] = _session_version()
             return jsonify({"ok": True, "username": store.get_admin_username()})
         return jsonify({"error": "invalid username or password"}), 401
 
@@ -596,9 +691,11 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
 
     @app.route("/api/admin/status")
     def admin_status():
+        logged = bool(session.get("admin")) and session.get("v") == _session_version()
         return jsonify({
             "has_admin": store.has_admin(),
-            "logged_in": bool(session.get("admin")),
+            "logged_in": logged,
+            "username": store.get_admin_username() if logged else "",
             "nodes": len(store.list_clients()),
         })
 
@@ -630,12 +727,144 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
     @_require_admin
     def admin_settings():
         if request.method == "GET":
-            return jsonify(store.get_public_settings())
+            out = store.get_public_settings()
+            out.update({
+                "offline_threshold": store.get_setting("offline_threshold", "180"),
+                "record_keep_hours": store.get_setting("record_keep_hours", "24"),
+                "notify_enabled": store.get_setting("notify_enabled", "0"),
+                "notify_webhook": store.get_setting("notify_webhook", ""),
+            })
+            return jsonify(out)
         data = request.get_json(force=True, silent=True) or {}
         for k in ("sitename", "description", "theme"):
             if k in data:
                 store.set_setting(k, str(data[k]))
+        # 数值型配置做范围钳制
+        if "offline_threshold" in data:
+            try:
+                v = max(30, min(3600, int(data["offline_threshold"])))
+            except Exception:
+                v = 180
+            store.set_setting("offline_threshold", str(v))
+        if "record_keep_hours" in data:
+            try:
+                v = max(1, min(720, int(data["record_keep_hours"])))
+            except Exception:
+                v = 24
+            store.set_setting("record_keep_hours", str(v))
+        if "notify_enabled" in data:
+            store.set_setting("notify_enabled", "1" if str(data["notify_enabled"]) == "1" else "0")
+        if "notify_webhook" in data:
+            store.set_setting("notify_webhook", str(data["notify_webhook"]).strip()[:500])
         return jsonify({"ok": True})
+
+    @app.route("/api/admin/dashboard")
+    @_require_admin
+    def admin_dashboard():
+        clients = store.list_clients()
+        online = [c for c in clients if _is_online(c)]
+        offline = [c for c in clients if not _is_online(c)]
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+        return jsonify({
+            "total": len(clients),
+            "online": len(online),
+            "offline": len(offline),
+            "db_size": store.db_size(),
+            "records": store.count_records(),
+            "reports_today": store.count_records_since(today),
+            "offline_threshold": _online_threshold(),
+            "offline_nodes": [
+                {"uuid": c["uuid"], "name": c.get("name") or c["uuid"][:8],
+                 "last_report_at": c.get("last_report_at")}
+                for c in sorted(offline, key=lambda c: c.get("last_report_at") or "")[:10]
+            ],
+            "nodes": [
+                {"uuid": c["uuid"], "name": c.get("name") or c["uuid"][:8],
+                 "online": _is_online(c), "last_report_at": c.get("last_report_at")}
+                for c in clients
+            ],
+        })
+
+    @app.route("/api/admin/notify/test", methods=["POST"])
+    @_require_admin
+    def admin_notify_test():
+        data = request.get_json(force=True, silent=True) or {}
+        url = (data.get("webhook") or store.get_setting("notify_webhook", "") or "").strip()
+        if not url:
+            return jsonify({"error": "webhook url required"}), 400
+        ok = _post_webhook(url, "✅ bigcat 通知测试：webhook 工作正常", timeout=10)
+        return jsonify({"ok": ok} if ok else {"error": "webhook 发送失败，请检查 URL"}), 200 if ok else 502
+
+    @app.route("/api/admin/account", methods=["POST"])
+    @_require_admin
+    def admin_account():
+        data = request.get_json(force=True, silent=True) or {}
+        cur_username = store.get_admin_username()
+        if not store.verify_admin(data.get("current_password", ""), cur_username):
+            return jsonify({"error": "当前密码错误"}), 401
+        username = (data.get("username") or "").strip()
+        new_password = data.get("new_password", "")
+        if username and username != cur_username and not new_password:
+            return jsonify({"error": "修改用户名需同时设置新密码"}), 400
+        if new_password:
+            store.set_admin(username or cur_username, new_password)
+        elif username and username != cur_username:
+            return jsonify({"error": "修改用户名需同时设置新密码"}), 400
+        return jsonify({"ok": True, "username": store.get_admin_username()})
+
+    @app.route("/api/admin/sessions")
+    @_require_admin
+    def admin_sessions():
+        return jsonify({
+            "current": {"ip": request.remote_addr, "user_agent": request.headers.get("User-Agent", "")[:120]},
+            "version": _session_version(),
+        })
+
+    @app.route("/api/admin/sessions/revoke_all", methods=["POST"])
+    @_require_admin
+    def admin_sessions_revoke_all():
+        store.set_setting("session_version", str(_session_version() + 1))
+        session["v"] = _session_version()
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/logs")
+    @_require_admin
+    def admin_logs():
+        try:
+            lines = max(50, min(1000, int(request.args.get("lines", 200))))
+        except Exception:
+            lines = 200
+        try:
+            out = subprocess.run(
+                ["journalctl", "-u", "bigcat", "--no-pager", "-n", str(lines)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                return jsonify({"source": "journalctl -u bigcat", "logs": out.stdout})
+        except Exception:
+            pass
+        return jsonify({"source": "", "logs": "",
+                        "hint": "未找到 systemd 日志（journalctl -u bigcat 不可用），请直接在服务器上查看"})
+
+    @app.route("/api/admin/about")
+    @_require_admin
+    def admin_about():
+        try:
+            flask_v = _pkg_version("flask")
+        except Exception:
+            flask_v = "unknown"
+        import platform
+        return jsonify({
+            "bigcat": VERSION,
+            "python": platform.python_version(),
+            "flask": flask_v,
+            "platform": platform.platform(),
+            "db_path": str(store.db_path),
+            "db_size": store.db_size(),
+            "records": store.count_records(),
+            "uptime_sec": int(time.time() - STARTED_AT),
+            "started_at": datetime.fromtimestamp(STARTED_AT, timezone.utc).isoformat().replace("+00:00", "Z"),
+        })
 
     # ------------------------------------------------------------ SPA fallback
     # 必须注册在所有路由之后：/traffic、/instance/xxx 等前端路由刷新或直连时

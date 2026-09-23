@@ -242,6 +242,24 @@ class Storage:
             self._conn.execute("DELETE FROM records WHERE time < ?", (cutoff,))
             self._conn.commit()
 
+    def count_records(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM records").fetchone()
+        return int(row["n"]) if row else 0
+
+    def count_records_since(self, since_iso: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM records WHERE time >= ?", (since_iso,)
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def db_size(self) -> int:
+        try:
+            return self.db_path.stat().st_size
+        except Exception:
+            return 0
+
     # ------------------------------------------------------------------ settings
     def get_setting(self, key: str, default: str = "") -> str:
         with self._lock:
