@@ -4,11 +4,14 @@
   bigcat 一键安装脚本（Windows）
 
 .DESCRIPTION
-  一键安装（安装过程中会交互式询问端口 / 管理员用户名 / 密码等），
+  首次安装会交互式询问端口 / 管理员用户名 / 密码等，
   请以管理员身份打开 PowerShell 后粘贴：
 
     irm https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 | iex
     # 按提示选择 server 或 agent，并输入端口 / 用户名 / 密码等
+
+  重复运行即升级：检测到已安装后自动复用原有配置（端口/账号/密码/主控地址/token），
+  直接更新程序并重启，不再重复提问。如需改端口可加 -Port 参数；如需重置管理员密码可加 -AdminPassword 参数。
 
   或先下载再传参（适合自动化）：
 
@@ -113,22 +116,38 @@ function Setup-Venv {
 }
 
 function Install-Server {
-  # ---- 交互式收集配置（参数优先）----
-  if (-not $PSBoundParameters.ContainsKey("Port")) {
-    $p = (Read-Host "服务端监听端口 [25774]").Trim()
-    if ($p) {
-      if ($p -notmatch '^\d+$') { Die "端口必须是数字" }
-      $Port = [int]$p
+  # ---- 升级检测：已安装则复用原有配置，跳过端口/账号/密码提问 ----
+  $upgrade = $false
+  $oldTask = Get-ScheduledTask -TaskName "bigcat-server" -ErrorAction SilentlyContinue
+  if ($oldTask) {
+    $upgrade = $true
+    if (-not $PSBoundParameters.ContainsKey("Port")) {
+      $args0 = $oldTask.Actions[0].Arguments
+      if ($args0 -match '--port\s+(\d+)') { $Port = [int]$Matches[1] }
     }
+  } elseif (Test-Path (Join-Path $InstallDir "server\app.py")) {
+    $upgrade = $true
   }
-  if (-not $AdminUser) {
-    $u = (Read-Host "管理员用户名 [admin]").Trim()
-    $AdminUser = if ($u) { $u } else { "admin" }
+  if ($upgrade) {
+    Log "检测到已安装 bigcat，进入升级模式：保留原有配置（端口=$Port、管理员账号与数据不动），仅更新程序并重启"
+  } else {
+    # ---- 交互式收集配置（参数优先）----
+    if (-not $PSBoundParameters.ContainsKey("Port")) {
+      $p = (Read-Host "服务端监听端口 [25774]").Trim()
+      if ($p) {
+        if ($p -notmatch '^\d+$') { Die "端口必须是数字" }
+        $Port = [int]$p
+      }
+    }
+    if (-not $AdminUser) {
+      $u = (Read-Host "管理员用户名 [admin]").Trim()
+      $AdminUser = if ($u) { $u } else { "admin" }
+    }
+    if (-not $PSBoundParameters.ContainsKey("AdminPassword")) {
+      $AdminPassword = Read-Secret "管理员密码（留空则跳过，可稍后设置）"
+    }
+    Log "配置: 端口=$Port, 管理员=$AdminUser"
   }
-  if (-not $PSBoundParameters.ContainsKey("AdminPassword")) {
-    $AdminPassword = Read-Secret "管理员密码（留空则跳过，可稍后设置）"
-  }
-  Log "配置: 端口=$Port, 管理员=$AdminUser"
 
   $src = Ensure-Sources
   Log "安装服务端..."
@@ -136,11 +155,13 @@ function Install-Server {
   Copy-Item -Recurse -Force (Join-Path $src "server") $InstallDir
   Setup-Venv
 
-  if ($AdminPassword) {
+  if ($PSBoundParameters.ContainsKey("AdminPassword") -and $AdminPassword) {
     Push-Location (Join-Path $InstallDir "server")
     & $VenvPython app.py --db (Join-Path $InstallDir "data\bigcat.db") --set-admin "$($AdminUser):$($AdminPassword)" | Out-Null
     Pop-Location
     Log "管理员账号已设置（用户名: $AdminUser）"
+  } elseif ($upgrade) {
+    Log "升级模式：保留原有管理员账号（如需重置，重新运行时加 -AdminPassword 参数）"
   } else {
     Log "未设置管理员账号，稍后可用以下命令设置："
     Log "  `"$VenvPython`" `"$InstallDir\server\app.py`" --db `"$InstallDir\data\bigcat.db`" --set-admin `"用户名:密码`""
@@ -170,6 +191,18 @@ function Install-Server {
 }
 
 function Install-Agent {
+  # ---- 升级检测：已安装则复用原主控地址与 token，跳过提问 ----
+  $upgrade = $false
+  $oldTask = Get-ScheduledTask -TaskName "bigcat-agent" -ErrorAction SilentlyContinue
+  if ($oldTask) {
+    $upgrade = $true
+    $args0 = $oldTask.Actions[0].Arguments
+    if (-not $ServerUrl -and $args0 -match '--server\s+(\S+)') { $ServerUrl = $Matches[1] }
+    if (-not $Token -and $args0 -match '--token\s+(\S+)') { $Token = $Matches[1] }
+  } elseif (Test-Path (Join-Path $InstallDir "agent.py")) {
+    $upgrade = $true
+  }
+  if ($upgrade) { Log "检测到已安装 agent，进入升级模式：保留原有主控地址与 token，仅更新程序并重启" }
   # ---- 交互式收集配置（参数优先）----
   if (-not $ServerUrl) { $ServerUrl = Read-Required "主控地址（例如 http://主控IP:25774）" }
   if (-not $Token)     { $Token = Read-Secret "Agent token（在主控执行 /api/agent/register 获取）" -Required }

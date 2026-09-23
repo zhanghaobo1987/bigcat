@@ -58,6 +58,10 @@
   textarea { min-height:80px; resize:vertical; font-family:monospace; }
   input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); }
   input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); }
+  .checklist { max-height:150px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;
+    padding:6px 10px; background:var(--card); display:grid; gap:4px; }
+  .checklist label { display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; margin:0; }
+  .checklist label small { color:var(--muted); }
   button { cursor:pointer; border:0; border-radius:8px; padding:9px 18px;
            font-size:14px; background:var(--accent); color:#fff; }
   button:hover { filter:brightness(1.1); }
@@ -207,8 +211,8 @@
         </div>
         <p class="muted">由 bigcat 主控每间隔定时探测（TCP / HTTP / ICMP），结果保留 72 小时。</p>
         <table>
-          <thead><tr><th>任务</th><th>目标</th><th>类型</th><th>间隔</th><th>最近延迟</th><th>可用率</th><th>启用</th><th>操作</th></tr></thead>
-          <tbody id="ping-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+          <thead><tr><th>任务</th><th>目标</th><th>类型</th><th>间隔</th><th>绑定节点</th><th>最近延迟</th><th>可用率</th><th>启用</th><th>操作</th></tr></thead>
+          <tbody id="ping-body"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
         </table>
       </div>
       <div class="card">
@@ -551,6 +555,8 @@
     </div>
     <label class="row" style="justify-content:flex-start">
       <input id="ping-enabled" type="checkbox" style="width:16px" checked> <span>启用</span></label>
+    <label>绑定节点（主题三网延迟用；留空 = 全局默认，适用于全部节点）</label>
+    <div id="ping-clients" class="checklist"><span class="muted">加载中…</span></div>
     <div class="err" id="ping-err"></div>
     <div class="row" style="margin-top:16px;justify-content:flex-end">
       <button class="ghost" id="btn-ping-cancel">取消</button>
@@ -928,26 +934,50 @@ $('btn-add-node').onclick = async () => {
 };
 
 /* ---------------- 延迟监测 ---------------- */
-let pingCache = [];
+let pingCache = [], pingNodesCache = null;
+async function pingNodes() {
+  if (pingNodesCache) return pingNodesCache;
+  const {status, data} = await api('/api/admin/clients');
+  pingNodesCache = (status === 200 && Array.isArray(data)) ? data : [];
+  return pingNodesCache;
+}
+function pingBoundName(uuid) {
+  const n = (pingNodesCache || []).find(x => x.uuid === uuid);
+  return n ? (n.name || n.uuid.slice(0, 8)) : uuid.slice(0, 8);
+}
+async function renderPingClients(selected) {
+  const box = $('ping-clients');
+  box.innerHTML = '<span class="muted">加载中…</span>';
+  const nodes = await pingNodes();
+  const sel = new Set(selected || []);
+  box.innerHTML = nodes.length ? nodes.map(n =>
+    `<label><input type="checkbox" value="${esc(n.uuid)}"${sel.has(n.uuid) ? ' checked' : ''}>
+     <span>${esc(n.name || n.uuid.slice(0, 8))} <small>${esc(n.ipv4 || n.ipv6 || '')}</small></span></label>`
+  ).join('') : '<span class="muted">暂无节点</span>';
+}
 async function loadPing() {
   const {status, data} = await api('/api/admin/ping/tasks');
   if (status === 401) return needLogin();
   pingCache = data;
+  await pingNodes();
   const st = await api('/api/admin/stats/ping?hours=24');
   const smap = {};
   (st.status === 200 ? st.data : []).forEach(s => smap[s.task_id] = s);
   const tb = $('ping-body');
   tb.innerHTML = data.length ? data.map(t => {
     const s = smap[t.id];
+    const bc = (t.clients || []).length;
+    const bindTxt = bc ? esc((t.clients || []).map(pingBoundName).join('、')) : '<span class="muted">全局默认</span>';
     return `<tr>
       <td>${esc(t.name)}</td><td class="token">${esc(t.target)}</td>
       <td>${esc(t.type).toUpperCase()}</td><td>${t.interval_sec}s</td>
+      <td title="${bc ? esc((t.clients || []).join(', ')) : '未绑定任何节点：适用于全部节点'}">${bindTxt}</td>
       <td>${s ? s.avg_ms + ' ms' : '-'}</td>
       <td>${s ? (s.uptime_pct + '%') : '-'}</td>
       <td><span class="badge ${t.enabled?'on':'off'}">${t.enabled?'启用':'停用'}</span></td>
       <td><button class="ghost small" onclick="openPingEdit(${t.id})">编辑</button>
         <button class="danger small" onclick="delPing(${t.id},'${esc(t.name)}')">删除</button></td></tr>`;
-  }).join('') : '<tr><td colspan="8" class="muted">暂无任务，点击右上新增。</td></tr>';
+  }).join('') : '<tr><td colspan="9" class="muted">暂无任务，点击右上新增。</td></tr>';
   $('ping-hist-task').innerHTML = data.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
 }
 LOADERS.ping = loadPing;
@@ -957,6 +987,7 @@ $('btn-add-ping').onclick = () => {
   $('ping-type').value = 'tcp'; $('ping-interval').value = 300; $('ping-enabled').checked = true;
   $('ping-err').textContent = '';
   $('modal-ping').classList.remove('hidden');
+  renderPingClients([]);
 };
 window.openPingEdit = id => {
   const t = pingCache.find(x => x.id === id); if (!t) return;
@@ -966,14 +997,16 @@ window.openPingEdit = id => {
   $('ping-enabled').checked = !!t.enabled;
   $('ping-err').textContent = '';
   $('modal-ping').classList.remove('hidden');
+  renderPingClients(t.clients || []);
 };
 $('btn-ping-cancel').onclick = closeModals;
 $('btn-ping-save').onclick = async () => {
   const id = $('ping-id').value;
+  const clients = [...document.querySelectorAll('#ping-clients input[type=checkbox]:checked')].map(c => c.value);
   const body = {
     name: $('ping-name').value.trim(), target: $('ping-target').value.trim(),
     type: $('ping-type').value, interval_sec: $('ping-interval').value,
-    enabled: $('ping-enabled').checked ? '1' : '0',
+    enabled: $('ping-enabled').checked ? '1' : '0', clients,
   };
   $('ping-err').textContent = '';
   if (!body.name || !body.target) { $('ping-err').textContent = '名称和目标必填'; return; }

@@ -145,6 +145,15 @@ class Storage:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pingres_task_time ON ping_results(task_id, time)")
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS ping_task_clients (
+                    task_id     INTEGER NOT NULL,
+                    client_uuid TEXT NOT NULL,
+                    PRIMARY KEY (task_id, client_uuid)
+                )
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS alert_rules (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
                     name         TEXT NOT NULL,
@@ -447,6 +456,9 @@ class Storage:
                               for r in self._conn.execute("SELECT short, data FROM theme_settings")}
             ping_tasks = [dict(r) for r in
                           self._conn.execute("SELECT * FROM ping_tasks ORDER BY id ASC")]
+            ping_task_clients = [dict(r) for r in
+                                 self._conn.execute(
+                                     "SELECT task_id, client_uuid FROM ping_task_clients ORDER BY task_id, client_uuid")]
             alert_rules = [dict(r) for r in
                            self._conn.execute("SELECT * FROM alert_rules ORDER BY id ASC")]
             clients = [self._row_to_client(r) for r in
@@ -454,7 +466,8 @@ class Storage:
         for c in clients:
             c.pop("last_report_at", None)
         return {"settings": settings, "theme_settings": theme_settings,
-                "ping_tasks": ping_tasks, "alert_rules": alert_rules, "clients": clients}
+                "ping_tasks": ping_tasks, "ping_task_clients": ping_task_clients,
+                "alert_rules": alert_rules, "clients": clients}
 
     def import_config(self, data: dict):
         """用备份数据整体替换配置（事务）。缺失的设置键用默认值补齐。"""
@@ -463,12 +476,13 @@ class Storage:
         settings = data.get("settings") or {}
         theme_settings = data.get("theme_settings") or {}
         ping_tasks = data.get("ping_tasks") or []
+        ping_task_clients = data.get("ping_task_clients") or []
         alert_rules = data.get("alert_rules") or []
         clients = data.get("clients") or []
         if not isinstance(settings, dict) or not isinstance(theme_settings, dict):
             raise ValueError("bad settings section")
         if not isinstance(ping_tasks, list) or not isinstance(alert_rules, list) \
-                or not isinstance(clients, list):
+                or not isinstance(clients, list) or not isinstance(ping_task_clients, list):
             raise ValueError("bad list section")
         import time as _time
         now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
@@ -499,6 +513,13 @@ class Storage:
                         (t.get("id"), str(t.get("name") or ""), str(t.get("target") or ""),
                          str(t.get("type") or "tcp"), int(t.get("interval_sec") or 300),
                          int(t.get("enabled", 1)), str(t.get("created_at") or now)))
+                cur.execute("DELETE FROM ping_task_clients")
+                for b in ping_task_clients:
+                    if not isinstance(b, dict) or not b.get("task_id") or not b.get("client_uuid"):
+                        continue
+                    cur.execute(
+                        "INSERT OR IGNORE INTO ping_task_clients(task_id, client_uuid) VALUES(?, ?)",
+                        (int(b["task_id"]), str(b["client_uuid"])))
                 cur.execute("DELETE FROM alert_rules")
                 for r in alert_rules:
                     cur.execute(
@@ -603,8 +624,26 @@ class Storage:
         with self._lock:
             cur = self._conn.execute("DELETE FROM ping_tasks WHERE id = ?", (task_id,))
             self._conn.execute("DELETE FROM ping_results WHERE task_id = ?", (task_id,))
+            self._conn.execute("DELETE FROM ping_task_clients WHERE task_id = ?", (task_id,))
             self._conn.commit()
         return cur.rowcount > 0
+
+    def get_ping_task_clients(self, task_id: int) -> list:
+        """任务绑定的节点 uuid 列表（Komari 语义：为空表示全局默认，适用所有节点）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT client_uuid FROM ping_task_clients WHERE task_id = ? ORDER BY client_uuid",
+                (task_id,)).fetchall()
+        return [r["client_uuid"] for r in rows]
+
+    def set_ping_task_clients(self, task_id: int, uuids) -> None:
+        uuids = [str(u) for u in (uuids or []) if str(u).strip()]
+        with self._lock:
+            self._conn.execute("DELETE FROM ping_task_clients WHERE task_id = ?", (task_id,))
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO ping_task_clients(task_id, client_uuid) VALUES(?, ?)",
+                [(task_id, u) for u in uuids])
+            self._conn.commit()
 
     def insert_ping_result(self, task_id: int, latency_ms: float, ok: bool):
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

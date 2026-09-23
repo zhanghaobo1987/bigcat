@@ -768,22 +768,32 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             for r in rows
         ]
 
+    def _public_ping_task(t):
+        """Komari 形状的延迟任务（含 clients 绑定，供主题三网延迟/探测点绑定使用）。"""
+        return {
+            "id": t.get("id"),
+            "name": t.get("name"),
+            "target": t.get("target"),
+            "type": t.get("type"),
+            "interval": int(t.get("interval_sec") or 60),
+            "interval_sec": int(t.get("interval_sec") or 60),
+            "enabled": bool(t.get("enabled")),
+            "clients": store.get_ping_task_clients(t.get("id")),
+        }
+
     def rpc_get_public_ping_tasks(params):
-        # Komari 形状的公开延迟任务列表（主题 ping 功能用 id/name/target/type/interval）
-        return [
-            {
-                "id": t.get("id"),
-                "name": t.get("name"),
-                "target": t.get("target"),
-                "type": t.get("type"),
-                "interval": int(t.get("interval_sec") or 60),
-                "enabled": bool(t.get("enabled")),
-            }
-            for t in store.list_ping_tasks()
-        ]
+        # Komari 形状的公开延迟任务列表（主题 ping 功能用 id/name/target/type/interval/clients）
+        return [_public_ping_task(t) for t in store.list_ping_tasks()]
 
     def _ping_task_nodes(task, clients):
-        """探测任务关联的节点：目标中包含节点 IP 即视为该节点的延迟探测。"""
+        """探测任务归属的节点。
+
+        Komari 语义：任务绑定了 clients 时，仅归属被绑定的节点；
+        未绑定（空列表）时沿用目标 IP 匹配启发式（bigcat 扩展）。"""
+        bound = store.get_ping_task_clients(task.get("id"))
+        by_uuid = {c.get("uuid"): c for c in clients}
+        if bound:
+            return [by_uuid[u] for u in bound if u in by_uuid]
         target = str(task.get("target") or "")
         out = []
         for c in clients:
@@ -1727,7 +1737,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     @app.route("/api/admin/ping/tasks", methods=["GET"])
     @_require_admin
     def admin_ping_tasks():
-        return jsonify(store.list_ping_tasks())
+        return jsonify([_public_ping_task(t) for t in store.list_ping_tasks()])
 
     @app.route("/api/admin/ping/tasks", methods=["POST"])
     @_require_admin
@@ -1745,8 +1755,10 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         except Exception:
             interval = 300
         task = store.add_ping_task(name, target, typ, interval)
+        if "clients" in data:
+            store.set_ping_task_clients(task["id"], data.get("clients") or [])
         store.log_event("info", "ping", f"新增延迟任务「{name}」（{typ} {target}）")
-        return jsonify(task)
+        return jsonify(_public_ping_task(task))
 
     @app.route("/api/admin/ping/tasks/<int:task_id>", methods=["PUT"])
     @_require_admin
@@ -1767,6 +1779,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         if "enabled" in data:
             fields["enabled"] = 1 if str(data["enabled"]) == "1" else 0
         store.update_ping_task(task_id, fields)
+        if "clients" in data:
+            store.set_ping_task_clients(task_id, data.get("clients") or [])
         return jsonify({"ok": True})
 
     @app.route("/api/admin/ping/tasks/<int:task_id>", methods=["DELETE"])
