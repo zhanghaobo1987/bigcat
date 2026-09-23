@@ -397,12 +397,21 @@ class Storage:
             self._conn.commit()
 
     def get_public_settings(self) -> dict:
+        def _hours(key: str, default: int) -> int:
+            try:
+                return int(self.get_setting(key, str(default)) or default)
+            except Exception:
+                return default
+
         return {
             "sitename": self.get_setting("sitename"),
             "description": self.get_setting("description"),
             "theme": self.get_setting("theme"),
             "private_site": False,
             "allow_register": False,
+            # Komari 兼容：监控记录 / ping 记录保留时长（小时），主题据此过滤图表时间选项
+            "record_preserve_time": _hours("record_keep_hours", 24),
+            "ping_record_preserve_time": _hours("ping_record_preserve_time", 4320),
         }
 
     # ------------------------------------------------------- theme settings

@@ -365,7 +365,9 @@
         <h2>数据清理</h2>
         <label>监控数据保留（小时）</label>
         <input id="db-keep-hours" type="number" min="1" max="720" style="max-width:200px">
-        <p class="muted">超过保留时长的主机监控记录将被自动删除（每小时检查一次）。延迟探测结果固定保留 72 小时。</p>
+        <label style="margin-top:8px">延迟探测数据保留（小时）</label>
+        <input id="db-ping-keep-hours" type="number" min="24" max="8760" step="24" style="max-width:200px">
+        <p class="muted">超过保留时长的主机监控记录将被自动删除（每小时检查一次）。延迟探测结果默认保留 4320 小时（180 天），前台 Ping 图表可查看 15/30/60/90/180 天。</p>
         <div class="ok" id="db-ok"></div>
         <button id="btn-db-save">保存</button>
       </div>
@@ -871,7 +873,27 @@ window.toggleToken = (uuid, token) => {
   const el = $('tok-' + uuid);
   el.textContent = (el.textContent === token) ? ('••••••••' + token.slice(-6)) : token;
 };
-window.copyText = t => navigator.clipboard.writeText(t).then(() => alert('已复制'));
+window.copyText = async (t) => {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(t);
+    } else {
+      // 非安全上下文（http://公网IP）clipboard API 不可用，用传统方式兜底
+      const ta = document.createElement('textarea');
+      ta.value = t;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      if (!document.execCommand('copy')) throw new Error('execCommand failed');
+      ta.remove();
+    }
+    alert('已复制');
+  } catch (e) {
+    alert('复制失败，请手动长按复制');
+  }
+};
 window.delNode = async (uuid, name) => {
   if (!confirm('确定删除节点「' + (name || uuid.slice(0,8)) + '」吗？其监控数据将一并删除。')) return;
   await api('/api/admin/client/' + uuid, 'DELETE');
@@ -1336,11 +1358,15 @@ async function loadDatabase() {
     ['登录会话数', data.sessions],
   ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(String(v))}</span></div>`).join('');
   $('db-keep-hours').value = data.record_keep_hours || 24;
+  $('db-ping-keep-hours').value = data.ping_record_preserve_time || 4320;
   $('db-ok').textContent = ''; $('vacuum-ok').textContent = '';
 }
 LOADERS.database = loadDatabase;
 $('btn-db-save').onclick = async () => {
-  const {status, data} = await api('/api/admin/settings', 'POST', {record_keep_hours: $('db-keep-hours').value});
+  const {status, data} = await api('/api/admin/settings', 'POST', {
+    record_keep_hours: $('db-keep-hours').value,
+    ping_record_preserve_time: $('db-ping-keep-hours').value,
+  });
   if (status === 401) return needLogin();
   if (status === 200 && data.ok) $('db-ok').textContent = '已保存';
 };

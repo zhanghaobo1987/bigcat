@@ -43,7 +43,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import version as _pkg_version
 
-from flask import Flask, jsonify, request, send_from_directory, session
+from flask import Flask, Response, jsonify, request, send_from_directory, session
 from flask_cors import CORS
 
 from storage import Storage
@@ -196,12 +196,58 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return app.config["static_dir"]
 
     # ------------------------------------------------------------ frontend
+    _THEME_JS_PATCH_CACHE = {}  # (theme_short, path, mtime_ns) -> patched bytes | None
+
+    def _patched_theme_js(p):
+        """返回打过补丁的主题 JS（bytes）；无需补丁/补丁不适用时返回 None。"""
+        dist = _active_theme_dist()
+        full = os.path.join(dist, "assets", p)
+        try:
+            st = os.stat(full)
+        except OSError:
+            return None
+        key = (_active_theme_short(), p, st.st_mtime_ns)
+        if key in _THEME_JS_PATCH_CACHE:
+            return _THEME_JS_PATCH_CACHE[key]
+        try:
+            with open(full, "rb") as f:
+                text = f.read().decode("utf-8", "ignore")
+        except OSError:
+            return None
+        # chartShared chunk: ping 图表时间选项 m 被硬编码为 p 中 <=168h 的子集；
+        # 扩展 p 并放开 m，使 15/30/60/90/180 天可选（后端保留时长兜底过滤）。
+        old = "{label:`7 天`,value:168},{label:`30 天`,value:720}],m=p.filter(e=>e.value<=168)"
+        new = ("{label:`7 天`,value:168},{label:`15 天`,value:360},"
+               "{label:`30 天`,value:720},{label:`60 天`,value:1440},"
+               "{label:`90 天`,value:2160},{label:`180 天`,value:4320}],m=p")
+        if old not in text:
+            _THEME_JS_PATCH_CACHE[key] = None
+            return None
+        out = text.replace(old, new).encode("utf-8")
+        _THEME_JS_PATCH_CACHE[key] = out
+        return out
+
+    def _ping_preserve_hours() -> int:
+        """ping 记录保留时长（小时），默认 4320 = 180 天；钳制到 [24, 8760]。"""
+        try:
+            v = int(store.get_setting("ping_record_preserve_time", "4320") or 4320)
+        except Exception:
+            v = 4320
+        return max(24, min(8760, v))
+
     @app.route("/")
     def index():
         return send_from_directory(_active_theme_dist(), "index.html")
 
     @app.route("/assets/<path:p>")
     def assets(p):
+        # LuminaPlus 的 ping 图表时间选项在主题 JS 里硬编码上限 7 天：
+        # 对其 chartShared chunk 做 serve-time 补丁，扩展为 15/30/60/90/180 天。
+        # 主题更新导致特征串匹配失败时原样返回，不影响页面。
+        if os.path.basename(p).startswith("chartShared-") and p.endswith(".js"):
+            patched = _patched_theme_js(p)
+            if patched is not None:
+                return Response(patched, mimetype="application/javascript")
         return send_from_directory(_active_theme_dist() + "/assets", p)
 
     @app.route("/images/<path:p>")
@@ -468,7 +514,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             store.insert_ping_result(task["id"], round(latency, 2), ok)
             next_run[task["id"]] = now + max(30, int(task.get("interval_sec") or 300))
         try:
-            store.prune_ping_results(72)
+            store.prune_ping_results(_ping_preserve_hours())
         except Exception:
             pass
 
@@ -839,12 +885,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         bucket = span / max_points
         start_ts = start.timestamp()
         end_iso = _iso(end)
+        # 长时间跨度需要更多原始点：按最小 30s 探测间隔估算行数
+        row_limit = max(200000, int(span / 30) + 1000)
         series = []
         for t in tasks:
             nodes = _ping_task_nodes(t, clients)
             if not nodes:
                 continue
-            rows = store.ping_results(t.get("id"), _iso(start), limit=200000)
+            rows = store.ping_results(t.get("id"), _iso(start), limit=row_limit)
             rows = [r for r in rows if (r.get("time") or "") <= end_iso
                     and _parse_time(r.get("time")) is not None]
             if not rows:
@@ -892,7 +940,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         bigcat 的延迟探测是主控主动探测，不按节点区分；uuid 查询时仅返回
         探测目标与该节点 IP 匹配的任务，没有匹配则返回空。"""
         try:
-            h = max(1, min(720, int(hours)))
+            h = max(1, min(_ping_preserve_hours(), int(hours)))
         except (TypeError, ValueError):
             h = 4
         since = (datetime.now(timezone.utc) - timedelta(hours=h)).isoformat()
@@ -960,12 +1008,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         else:
             clients = [c for c in clients if not c.get("hidden")]
         end_iso = _iso(end)
+        span_s = max(1.0, (end - start).total_seconds())
+        row_limit = max(200000, int(span_s / 30) + 1000)
         stats = []
         for t in tasks:
             nodes = _ping_task_nodes(t, clients)
             if not nodes:
                 continue
-            rows = store.ping_results(t.get("id"), _iso(start), limit=200000)
+            rows = store.ping_results(t.get("id"), _iso(start), limit=row_limit)
             rows = [r for r in rows if (r.get("time") or "") <= end_iso]
             total = len(rows)
             oks = [float(r["latency_ms"]) for r in rows
@@ -1567,6 +1617,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             out.update({
                 "offline_threshold": store.get_setting("offline_threshold", "180"),
                 "record_keep_hours": store.get_setting("record_keep_hours", "24"),
+                "ping_record_preserve_time": store.get_setting("ping_record_preserve_time", "4320"),
                 "notify_enabled": store.get_setting("notify_enabled", "0"),
                 "notify_webhook": store.get_setting("notify_webhook", ""),
                 "notify_template": store.get_setting("notify_template", "【{event}】{message}"),
@@ -1591,6 +1642,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             except Exception:
                 v = 24
             store.set_setting("record_keep_hours", str(v))
+        if "ping_record_preserve_time" in data:
+            try:
+                v = max(24, min(8760, int(data["ping_record_preserve_time"])))
+            except Exception:
+                v = 4320
+            store.set_setting("ping_record_preserve_time", str(v))
         if "notify_enabled" in data:
             store.set_setting("notify_enabled", "1" if str(data["notify_enabled"]) == "1" else "0")
         if "notify_webhook" in data:
@@ -2144,6 +2201,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             "ping_results": ping_n,
             "sessions": sess_n,
             "record_keep_hours": store.get_setting("record_keep_hours", "24"),
+            "ping_record_preserve_time": store.get_setting("ping_record_preserve_time", "4320"),
         })
 
     @app.route("/api/admin/db/vacuum", methods=["POST"])
