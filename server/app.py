@@ -37,7 +37,19 @@ from flask_cors import CORS
 
 from storage import Storage
 
-VERSION = "1.0.0"
+def _read_version() -> str:
+    # bigcat 版本号唯一来源：server/VERSION 文件，每次修改按 semver 递增
+    try:
+        with open(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"),
+            encoding="utf-8",
+        ) as f:
+            return f.read().strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+VERSION = _read_version()
 VERSION_HASH = "bigcat"
 
 STATIC_DIR = "static"

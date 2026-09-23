@@ -111,9 +111,13 @@
   </div>
 
 </div>
+<footer style="text-align:center;color:var(--muted);font-size:12px" id="ver-foot"></footer>
 
 <script>
 const $ = id => document.getElementById(id);
+fetch('/api/version').then(r => r.json()).then(d => {
+  if (d && d.version) $('ver-foot').textContent = 'bigcat v' + d.version;
+}).catch(() => {});
 async function api(path, method, body) {
   const r = await fetch(path, {
     method: method || 'GET', credentials: 'same-origin',
