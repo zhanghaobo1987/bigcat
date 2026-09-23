@@ -40,7 +40,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-log() { echo "[bigcat] $*"; }
+log() { echo "[bigcat] $*" >&2; }  # 输出到 stderr，避免污染 $(...) 命令替换捕获的路径
 die() { echo "[bigcat] 错误: $*" >&2; exit 1; }
 
 [ "$(uname)" = "Darwin" ] || die "此脚本仅适用于 macOS"
