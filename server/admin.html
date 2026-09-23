@@ -6,9 +6,9 @@
 <title>bigcat 后台管理</title>
 <style>
   :root { --bg:#0b0f14; --card:#131a23; --border:#232d3a; --text:#e6edf3;
-          --muted:#8b98a9; --accent:#2f81f7; --danger:#f85149; --ok:#3fb950; --warn:#d29922; }
+          --muted:#8b98a9; --accent:#2f81f7; --danger:#f85149; --ok:#3fb950; --warn:#d29922; --code-bg:#0d131b; }
   [data-skin-mode="light"] { --bg:#eef2f7; --card:#ffffff; --border:#dbe3ec; --text:#1c2733;
-          --muted:#64748b; --accent:#2f81f7; --danger:#d64545; --ok:#2f9e44; --warn:#b7791f; }
+          --muted:#64748b; --accent:#2f81f7; --danger:#d64545; --ok:#2f9e44; --warn:#b7791f; --code-bg:#edf1f7; }
   [data-skin-mode="light"] aside { background:#e6ecf4; }
   [data-skin-mode="light"] aside nav button:hover { background:#dbe4ef; color:var(--text); }
   [data-skin-mode="light"] aside nav button.active { background:#d5e4fb; }
@@ -18,7 +18,7 @@
   .brand:hover h1 { color:var(--accent); }
   .theme-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:16px; }
   .theme-card { border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--card); }
-  .theme-card img { width:100%; height:140px; object-fit:cover; background:#0d131b; display:block; }
+  .theme-card img { width:100%; height:140px; object-fit:cover; background:var(--code-bg); display:block; }
   .theme-card .tbody { padding:12px; }
   .theme-card .tmeta { font-size:12px; color:var(--muted); margin:4px 0 10px; }
   .badge-active { display:inline-block; font-size:11px; background:var(--ok); color:#fff;
@@ -30,7 +30,7 @@
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
   .layout { display:flex; min-height:100vh; }
-  aside { width:220px; flex-shrink:0; background:#0d131b; border-right:1px solid var(--border);
+  aside { width:220px; flex-shrink:0; background:var(--code-bg); border-right:1px solid var(--border);
           padding:20px 12px; position:sticky; top:0; height:100vh; overflow-y:auto; }
   aside h1 { font-size:17px; margin:0 0 4px 8px; }
   aside .ver { font-size:11px; color:var(--muted); margin:0 0 12px 8px; }
@@ -74,7 +74,7 @@
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); }
   th { color:var(--muted); font-weight:500; white-space:nowrap; }
-  code.cmd { display:block; background:#0d131b; border:1px solid var(--border);
+  code.cmd { display:block; background:var(--code-bg); border:1px solid var(--border);
              border-radius:8px; padding:10px 12px; font-size:12px; word-break:break-all;
              margin:8px 0; user-select:all; }
   .row { display:flex; gap:8px; align-items:center; }
@@ -86,7 +86,7 @@
   .badge.off { background:rgba(248,81,73,.15); color:var(--danger); }
   .badge.warn { background:rgba(210,153,34,.15); color:var(--warn); }
   .badge.info { background:rgba(47,129,247,.15); color:var(--accent); }
-  pre.logs { background:#0d131b; border:1px solid var(--border); border-radius:8px;
+  pre.logs { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
              padding:12px; font-size:12px; max-height:480px; overflow:auto; white-space:pre-wrap; }
   .center { max-width:400px; margin:8vh auto 0; }
   .center h1 { text-align:center; margin-bottom:16px; font-size:20px; }
@@ -106,11 +106,11 @@
              padding:12px; font-size:13px; margin-bottom:16px; }
   .chk-list { display:flex; flex-wrap:wrap; gap:8px; }
   .chk-list label { display:flex; align-items:center; gap:6px; margin:0; color:var(--text);
-                    background:#0d131b; border:1px solid var(--border); border-radius:8px; padding:6px 12px; cursor:pointer; }
+                    background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:6px 12px; cursor:pointer; }
   canvas.chart { width:100%; height:220px; }
   details.out { margin-top:6px; }
   details.out summary { cursor:pointer; color:var(--muted); font-size:12px; }
-  details.out pre { background:#0d131b; border:1px solid var(--border); border-radius:8px;
+  details.out pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
                     padding:10px; font-size:12px; max-height:300px; overflow:auto; white-space:pre-wrap; }
   @media (max-width:760px) {
     .layout { flex-direction:column; }
@@ -573,7 +573,7 @@
     <input id="deploy-proxy" type="text" placeholder="https://ghproxy.com/">
     <label>指令 <span class="muted">（在被控机上以 root / 管理员身份执行）</span></label>
     <textarea id="deploy-cmd" rows="4" readonly
-      style="width:100%;font-family:monospace;font-size:12px;background:#0d131b;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;resize:vertical"></textarea>
+      style="width:100%;font-family:monospace;font-size:12px;background:var(--code-bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;resize:vertical"></textarea>
     <div class="row" style="margin-top:16px;justify-content:flex-end">
       <button class="ghost" id="btn-deploy-cancel">关闭</button>
       <button id="btn-deploy-copy">⧉ 复制指令</button>
@@ -1716,7 +1716,7 @@ async function loadThemes() {
     <div class="theme-card">
       ${(t.preview && t.short !== 'default')
         ? `<img src="/api/admin/theme/preview/${encodeURIComponent(t.short)}" alt="">`
-        : `<div style="height:140px;display:flex;align-items:center;justify-content:center;font-size:42px;background:#0d131b">🎨</div>`}
+        : `<div style="height:140px;display:flex;align-items:center;justify-content:center;font-size:42px;background:var(--code-bg)">🎨</div>`}
       <div class="tbody">
         <div><b>${esc(t.name)}</b>${t.active ? '<span class="badge-active">使用中</span>' : ''}</div>
         <div class="tmeta">${esc(t.version || '')} ${esc(t.author || '')}<br>${esc(t.description || '')}</div>
