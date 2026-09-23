@@ -17,14 +17,121 @@ bigcat/
 ├── agent/
 │   └── agent.py        # 被控端采集脚本（psutil）
 ├── scripts/
-│   ├── install.sh      # 一键安装脚本（服务端 / 被控端）
-│   └── bigcat.service  # systemd 服务单元（服务端）
+│   ├── install.sh          # Debian/Ubuntu 一键安装（server/agent）
+│   ├── uninstall.sh        # Debian/Ubuntu 卸载
+│   ├── install-macos.sh    # macOS 一键安装（server/agent，launchd）
+│   ├── uninstall-macos.sh  # macOS 卸载
+│   ├── install.ps1         # Windows 一键安装（server/agent，计划任务）
+│   ├── uninstall.ps1       # Windows 卸载
+│   └── bigcat.service      # systemd 服务单元（服务端，供参考）
 ├── requirements.txt
 ├── Dockerfile
 └── README.md
 ```
 
-## 快速开始
+## 安装与卸载
+
+> 一键脚本会自动：安装 Python 依赖 → 创建虚拟环境 → 复制程序文件 →
+> 注册开机自启服务 → 放行防火墙端口。默认端口 `25774`，可用 `--port` /
+> `-Port` 修改。
+
+### Debian / Ubuntu
+
+**安装主控端（服务端）：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh \
+  | sudo bash -s -- server
+# 指定端口： ... | sudo bash -s -- server --port 8080
+# 预设管理密码： BIGCAT_ADMIN_PASSWORD=xxx ... | sudo bash -s -- server
+```
+
+**安装被控端（Agent，需先在主控注册拿到 token）：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh \
+  | sudo bash -s -- agent http://主控IP:25774 <token>
+```
+
+**卸载：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall.sh \
+  | sudo bash -s -- all            # 卸载全部（保留监控数据）
+# sudo bash -s -- all --purge      # 卸载全部并删除数据
+# sudo bash -s -- server           # 只卸载主控端
+# sudo bash -s -- agent            # 只卸载被控端
+```
+
+### macOS
+
+**安装主控端：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh \
+  | sudo bash -s -- server
+# 指定端口： ... | sudo bash -s -- server --port 8080
+```
+
+**安装被控端：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh \
+  | sudo bash -s -- agent http://主控IP:25774 <token>
+```
+
+服务通过 launchd 注册（`com.bigcat.server` / `com.bigcat.agent`），开机自启。
+
+**卸载：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall-macos.sh \
+  | sudo bash -s -- all [--purge]
+```
+
+### Windows
+
+请以**管理员身份**打开 PowerShell：
+
+**安装主控端：**
+
+```powershell
+# 先下载脚本（以便传参）
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 -OutFile $env:TEMP\install.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server
+# 指定端口 / 预设密码：
+# powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server -Port 8080 -AdminPassword "你的强密码"
+```
+
+**安装被控端：**
+
+```powershell
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 -OutFile $env:TEMP\install.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode agent -ServerUrl http://主控IP:25774 -Token <token>
+```
+
+服务注册为 Windows 计划任务（`bigcat-server` / `bigcat-agent`），系统启动时自动运行（无窗口，后台运行）。
+
+**卸载：**
+
+```powershell
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/uninstall.ps1 -OutFile $env:TEMP\uninstall.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\uninstall.ps1 -Mode all
+# 彻底删除数据：加 -Purge
+```
+
+### 注册被控节点（拿 token）
+
+在主控端上为每台被监控的机器注册一个节点：
+
+```bash
+curl -X POST http://主控IP:25774/api/agent/register \
+  -H "Content-Type: application/json" \
+  -d '{"name":"hk-1"}'
+# 返回 {"uuid": "...", "token": "..."}，token 填给对应机器的安装命令
+```
+
+## 手动运行（不装服务）
 
 ### 1. 启动服务端（主控端）
 
@@ -44,30 +151,12 @@ curl -X POST http://127.0.0.1:25774/api/admin/setup \
 
 然后浏览器打开 `http://服务器IP:25774`。
 
-### 2. 注册被控节点
-
-在主控端上为每台被监控的 VPS 注册一个节点，拿到 `uuid` 和 `token`：
-
-```bash
-curl -X POST http://127.0.0.1:25774/api/agent/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"hk-1"}'
-```
-
-返回示例：
-
-```json
-{"uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "token": "64位随机token"}
-```
-
-### 3. 在被控 VPS 上运行 Agent
+### 2. 在被控机器上手动运行 Agent
 
 ```bash
 pip install psutil requests
-python3 agent.py --server http://主控IP:25774 --token <token> --interval 2
+python3 agent/agent.py --server http://主控IP:25774 --token <token> --interval 2
 ```
-
-也可以用一键安装脚本（见 `scripts/install.sh`），它会把 agent 注册为 systemd 服务开机自启。
 
 ## API 兼容性
 
