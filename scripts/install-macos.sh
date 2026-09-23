@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # bigcat 一键安装脚本（macOS）
 #
-# 服务端（主控）:
+# 一键粘贴安装（安装过程中会交互式询问端口 / 管理员用户名 / 密码等）:
 #   curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- server
-#   # 指定端口: ... | sudo bash -s -- server --port 8080
 #
-# 被控端（agent，需先在主控注册拿到 token）:
-#   curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- agent http://主控IP:25774 <token>
+# 被控端（agent）:
+#   curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- agent
+#   # 安装过程中会询问主控地址和 token
+#
+# 非交互式（自动化）可用参数或环境变量预设全部答案:
+#   curl -fsSL .../install-macos.sh | sudo bash -s -- server --port 8080 --admin-user admin --admin-password "xxx"
+#   curl -fsSL .../install-macos.sh | sudo bash -s -- agent http://主控IP:25774 <token>
 #
 # 也支持 git clone 后本地运行: sudo bash scripts/install-macos.sh server
 set -euo pipefail
@@ -19,13 +23,19 @@ PLIST_DIR="/Library/LaunchDaemons"
 
 MODE="${1:-}"
 shift || true
-PORT="$DEFAULT_PORT"
-SERVER_URL=""
-TOKEN=""
+PORT="${BIGCAT_PORT:-}"
+ADMIN_USER="${BIGCAT_ADMIN_USER:-}"
+ADMIN_PASSWORD="${BIGCAT_ADMIN_PASSWORD:-}"
+SERVER_URL="${BIGCAT_SERVER_URL:-}"
+TOKEN="${BIGCAT_AGENT_TOKEN:-}"
+PASSWORD_GIVEN="no"
+[ -n "${BIGCAT_ADMIN_PASSWORD+x}" ] && PASSWORD_GIVEN="yes"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --port) PORT="${2:?--port 需要一个端口号}"; shift 2 ;;
+    --port)           PORT="${2:?--port 需要一个端口号}"; shift 2 ;;
+    --admin-user)     ADMIN_USER="${2:?--admin-user 需要一个用户名}"; shift 2 ;;
+    --admin-password) ADMIN_PASSWORD="${2:?--admin-password 需要一个密码}"; PASSWORD_GIVEN="yes"; shift 2 ;;
     *) if [ -z "$SERVER_URL" ]; then SERVER_URL="$1"; else TOKEN="$1"; fi; shift ;;
   esac
 done
@@ -36,6 +46,55 @@ die() { echo "[bigcat] 错误: $*" >&2; exit 1; }
 [ "$(uname)" = "Darwin" ] || die "此脚本仅适用于 macOS"
 [ "$(id -u)" -eq 0 ] || die "请用 root 运行此脚本（加 sudo），以便注册系统级 launchd 服务"
 
+# ---------------------------------------------------------------- 交互式提问
+# 关键：从 /dev/tty 读取，而不是 stdin，这样 curl ... | bash 管道模式下也能提问
+# have_tty 用真实 open 测试（[ -r /dev/tty ] 只看权限位，没有控制终端时 open 会失败）
+have_tty() { : <> /dev/tty; } 2>/dev/null
+
+ask() { # ask <提示语> <默认值> -> 输出答案（无 TTY 时直接用默认值）
+  local msg="$1" def="$2" ans=""
+  if have_tty; then
+    printf "%s [%s]: " "$msg" "$def" > /dev/tty
+    IFS= read -r ans < /dev/tty || ans=""
+  fi
+  printf "%s" "${ans:-$def}"
+}
+
+ask_required() { # ask_required <提示语> -> 输出非空答案
+  local msg="$1" ans=""
+  while [ -z "$ans" ]; do
+    if have_tty; then
+      printf "%s: " "$msg" > /dev/tty
+      IFS= read -r ans < /dev/tty || ans=""
+    else
+      die "缺少必填项: $msg（无交互终端，请用参数或环境变量提供）"
+    fi
+    [ -n "$ans" ] || { echo "  不能为空，请重新输入" > /dev/tty; }
+  done
+  printf "%s" "$ans"
+}
+
+ask_secret() { # ask_secret <提示语> -> 输出密码（可为空表示跳过）；带确认
+  local msg="$1" p1="" p2=""
+  have_tty || { printf ""; return; }
+  while true; do
+    printf "%s: " "$msg" > /dev/tty
+    stty -echo < /dev/tty 2>/dev/null || true
+    IFS= read -r p1 < /dev/tty || p1=""
+    stty echo < /dev/tty 2>/dev/null || true
+    printf "\n" > /dev/tty
+    [ -z "$p1" ] && { printf ""; return; }   # 留空 = 跳过
+    printf "再输入一次确认: " > /dev/tty
+    stty -echo < /dev/tty 2>/dev/null || true
+    IFS= read -r p2 < /dev/tty || p2=""
+    stty echo < /dev/tty 2>/dev/null || true
+    printf "\n" > /dev/tty
+    if [ "$p1" = "$p2" ]; then printf "%s" "$p1"; return; fi
+    echo "  两次输入不一致，请重新输入（留空跳过）" > /dev/tty
+  done
+}
+
+# ---------------------------------------------------------------- 基础能力
 ensure_sources() {
   local script_dir="$1"
   if [ -d "$script_dir/../server" ] && [ -f "$script_dir/../agent/agent.py" ]; then
@@ -102,25 +161,32 @@ EOF
   log "launchd 服务 $label 已加载（开机自启）"
 }
 
+# ---------------------------------------------------------------- 安装
 install_server() {
+  # ---- 交互式收集配置（参数/环境变量优先）----
+  [ -n "$PORT" ]         || PORT="$(ask "服务端监听端口" "$DEFAULT_PORT")"
+  [ -n "$ADMIN_USER" ]   || ADMIN_USER="$(ask "管理员用户名" "admin")"
+  if [ "$PASSWORD_GIVEN" = "no" ]; then
+    ADMIN_PASSWORD="$(ask_secret "管理员密码（留空则跳过，可稍后设置）")"
+  fi
+  case "$PORT" in ''|*[!0-9]*) die "端口必须是数字" ;; esac
+
+  log "配置: 端口=$PORT, 管理员=$ADMIN_USER"
   local src
   src="$(ensure_sources "$(cd "$(dirname "$0")" && pwd)")"
-  log "安装服务端（端口 $PORT）..."
+  log "安装服务端..."
   install_python
   mkdir -p "$INSTALL_DIR/data"
   cp -r "$src/server" "$INSTALL_DIR/"
   setup_venv
 
-  local admin_pw="${BIGCAT_ADMIN_PASSWORD:-}"
-  if [ -z "$admin_pw" ] && [ -t 0 ]; then
-    read -rsp "设置管理密码（留空则跳过，可稍后设置）: " admin_pw; echo
-  fi
-  if [ -n "$admin_pw" ]; then
-    (cd "$INSTALL_DIR/server" && "$VENV/bin/python" app.py --db "$INSTALL_DIR/data/bigcat.db" --set-admin "$admin_pw" >/dev/null)
-    log "管理密码已设置"
+  if [ -n "$ADMIN_PASSWORD" ]; then
+    (cd "$INSTALL_DIR/server" && "$VENV/bin/python" app.py --db "$INSTALL_DIR/data/bigcat.db" \
+      --set-admin "$ADMIN_USER:$ADMIN_PASSWORD" >/dev/null)
+    log "管理员账号已设置（用户名: $ADMIN_USER）"
   else
-    log "未设置管理密码，稍后可用以下命令设置："
-    log "  $VENV/bin/python $INSTALL_DIR/server/app.py --db $INSTALL_DIR/data/bigcat.db --set-admin \"你的强密码\""
+    log "未设置管理员账号，稍后可用以下命令设置："
+    log "  $VENV/bin/python $INSTALL_DIR/server/app.py --db $INSTALL_DIR/data/bigcat.db --set-admin \"用户名:密码\""
   fi
 
   write_plist "com.bigcat.server" "\
@@ -134,8 +200,18 @@ install_server() {
 }
 
 install_agent() {
-  [ -n "$SERVER_URL" ] || die "用法: bash install-macos.sh agent http://主控IP:25774 <token>"
-  [ -n "$TOKEN" ] || die "用法: bash install-macos.sh agent http://主控IP:25774 <token>"
+  [ -n "$SERVER_URL" ] || SERVER_URL="$(ask_required "主控地址（例如 http://主控IP:25774）")"
+  if [ -z "$TOKEN" ]; then
+    if have_tty; then
+      printf "Agent token（在主控执行 /api/agent/register 获取）: " > /dev/tty
+      stty -echo < /dev/tty 2>/dev/null || true
+      IFS= read -r TOKEN < /dev/tty || TOKEN=""
+      stty echo < /dev/tty 2>/dev/null || true
+      printf "\n" > /dev/tty
+    fi
+    [ -n "$TOKEN" ] || die "缺少 token（无交互终端，请用参数或 BIGCAT_AGENT_TOKEN 提供）"
+  fi
+
   local src
   src="$(ensure_sources "$(cd "$(dirname "$0")" && pwd)")"
   log "安装 agent，上报目标 $SERVER_URL ..."
@@ -161,9 +237,14 @@ case "$MODE" in
   agent)  install_agent ;;
   *)
     echo "用法:" >&2
-    echo "  sudo bash install-macos.sh server [--port 端口]              # 安装主控端（默认 25774）" >&2
-    echo "  sudo bash install-macos.sh agent http://主控IP:25774 <token>  # 安装被控端" >&2
+    echo "  一键安装（交互式）:" >&2
+    echo "    curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- server" >&2
+    echo "    curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- agent" >&2
+    echo "  非交互式:" >&2
+    echo "    ... | sudo bash -s -- server --port 8080 --admin-user admin --admin-password \"xxx\"" >&2
+    echo "    ... | sudo bash -s -- agent http://主控IP:25774 <token>" >&2
     echo "" >&2
-    echo "环境变量: BIGCAT_ADMIN_PASSWORD=xxx  可在安装主控时预设管理密码" >&2
+    echo "环境变量: BIGCAT_PORT / BIGCAT_ADMIN_USER / BIGCAT_ADMIN_PASSWORD /" >&2
+    echo "          BIGCAT_SERVER_URL / BIGCAT_AGENT_TOKEN" >&2
     exit 1 ;;
 esac

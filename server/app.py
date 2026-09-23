@@ -549,10 +549,10 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
     @app.route("/api/admin/login", methods=["POST"])
     def admin_login():
         data = request.get_json(force=True, silent=True) or {}
-        if store.verify_admin(data.get("password", "")):
+        if store.verify_admin(data.get("password", ""), data.get("username", "")):
             session["admin"] = True
-            return jsonify({"ok": True})
-        return jsonify({"error": "invalid password"}), 401
+            return jsonify({"ok": True, "username": store.get_admin_username()})
+        return jsonify({"error": "invalid username or password"}), 401
 
     @app.route("/api/admin/logout", methods=["POST"])
     def admin_logout():
@@ -612,18 +612,24 @@ def main():
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=25774)
     ap.add_argument("--db", default="data/bigcat.db")
-    ap.add_argument("--set-admin", metavar="PASSWORD",
-                    help="set (or reset) the admin password and exit")
+    ap.add_argument("--set-admin", metavar="USER:PASS",
+                    help="set (or reset) the admin account and exit; "
+                         "format 'username:password', or plain 'password' "
+                         "(username keeps existing value, default admin)")
     args = ap.parse_args()
 
     app = create_app(db_path=args.db)
     store: Storage = app.config["store"]
     if args.set_admin:
-        store.set_admin_password(args.set_admin)
-        print("admin password updated")
+        if ":" in args.set_admin:
+            username, password = args.set_admin.split(":", 1)
+            store.set_admin(username.strip() or "admin", password)
+        else:
+            store.set_admin_password(args.set_admin)
+        print(f"admin account updated (username: {store.get_admin_username()})")
         return
     if not store.has_admin():
-        print("NOTE: no admin password set. Run with --set-admin <password> first.")
+        print("NOTE: no admin account set. Run with --set-admin <user:pass> first.")
     print(f"bigcat server v{VERSION} listening on http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, threaded=True)
 

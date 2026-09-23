@@ -269,18 +269,36 @@ class Storage:
         }
 
     # ------------------------------------------------------------------ auth
-    def verify_admin(self, password: str) -> bool:
+    def verify_admin(self, password: str, username: str = "") -> bool:
         import hashlib
 
         stored = self.get_setting("admin_password")
         if not stored:
             return False
-        return stored == hashlib.sha256(password.encode()).hexdigest()
+        if stored != hashlib.sha256(password.encode()).hexdigest():
+            return False
+        # 用户名校验：未设置用户名时只校验密码，保持向后兼容
+        stored_user = self.get_setting("admin_username") or "admin"
+        if username:
+            return username == stored_user
+        return True
 
-    def set_admin_password(self, password: str):
+    def set_admin(self, username: str, password: str):
         import hashlib
 
+        self.set_setting("admin_username", username or "admin")
         self.set_setting("admin_password", hashlib.sha256(password.encode()).hexdigest())
+
+    def set_admin_password(self, password: str):
+        """向后兼容：只改密码，保留已有用户名（默认为 admin）"""
+        import hashlib
+
+        if not self.get_setting("admin_username"):
+            self.set_setting("admin_username", "admin")
+        self.set_setting("admin_password", hashlib.sha256(password.encode()).hexdigest())
+
+    def get_admin_username(self) -> str:
+        return self.get_setting("admin_username") or "admin"
 
     def has_admin(self) -> bool:
         return bool(self.get_setting("admin_password"))

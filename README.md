@@ -32,8 +32,12 @@ bigcat/
 ## 安装与卸载
 
 > 一键脚本会自动：安装 Python 依赖 → 创建虚拟环境 → 复制程序文件 →
-> 注册开机自启服务 → 放行防火墙端口。默认端口 `25774`，可用 `--port` /
-> `-Port` 修改。
+> 注册开机自启服务 → 放行防火墙端口。
+>
+> **一键粘贴安装**：下面每条 `curl … | bash` 命令粘贴后，安装过程中会
+> **交互式询问**监听端口、管理员用户名/密码（主控端）或主控地址/token
+> （被控端），直接回车可用默认值。也可以用 `--port` / `--admin-user` /
+> `--admin-password` 参数或 `BIGCAT_*` 环境变量预设答案，实现全自动安装。
 
 ### Debian / Ubuntu
 
@@ -44,6 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/
   | sudo bash -s -- server
 # 指定端口： ... | sudo bash -s -- server --port 8080
 # 预设管理密码： BIGCAT_ADMIN_PASSWORD=xxx ... | sudo bash -s -- server
+# 全自动示例： ... | sudo bash -s -- server --port 8080 --admin-user admin --admin-password "xxx"
 ```
 
 **安装被控端（Agent，需先在主控注册拿到 token）：**
@@ -91,7 +96,13 @@ curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/
 
 ### Windows
 
-请以**管理员身份**打开 PowerShell：
+请以**管理员身份**打开 PowerShell，粘贴一键安装（会先让你选 server/agent，再交互式询问端口 / 用户名 / 密码等）：
+
+```powershell
+irm https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 | iex
+```
+
+或先下载再传参（适合自动化）：
 
 **安装主控端：**
 
@@ -100,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/
 Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 -OutFile $env:TEMP\install.ps1
 powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server
 # 指定端口 / 预设密码：
-# powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server -Port 8080 -AdminPassword "你的强密码"
+# powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server -Port 8080 -AdminUser admin -AdminPassword "你的强密码"
 ```
 
 **安装被控端：**
@@ -141,12 +152,12 @@ cd server
 python3 app.py --port 25774 --db data/bigcat.db
 ```
 
-首次启动后设置管理密码：
+首次启动后设置管理员账号（用户名:密码）：
 
 ```bash
-curl -X POST http://127.0.0.1:25774/api/admin/setup \
-  -H "Content-Type: application/json" \
-  -d '{"password":"你的强密码"}'
+cd server
+python3 app.py --db data/bigcat.db --set-admin "admin:你的强密码"
+# 只改密码（保留原用户名）: python3 app.py --db data/bigcat.db --set-admin "你的强密码"
 ```
 
 然后浏览器打开 `http://服务器IP:25774`。

@@ -4,14 +4,17 @@
   bigcat 一键安装脚本（Windows）
 
 .DESCRIPTION
-  服务端（主控）:
-    irm https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 | iex
-    # 实际上推荐先下载再执行，以便传参：
-    #   powershell -ExecutionPolicy Bypass -File install.ps1 -Mode server
-    #   powershell -ExecutionPolicy Bypass -File install.ps1 -Mode server -Port 8080
+  一键安装（安装过程中会交互式询问端口 / 管理员用户名 / 密码等），
+  请以管理员身份打开 PowerShell 后粘贴：
 
-  被控端（agent，需先在主控注册拿到 token）:
-    powershell -ExecutionPolicy Bypass -File install.ps1 -Mode agent -ServerUrl http://主控IP:25774 -Token <token>
+    irm https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 | iex
+    # 按提示选择 server 或 agent，并输入端口 / 用户名 / 密码等
+
+  或先下载再传参（适合自动化）：
+
+    Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 -OutFile $env:TEMP\install.ps1
+    powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode server -Port 8080 -AdminUser admin -AdminPassword "xxx"
+    powershell -ExecutionPolicy Bypass -File $env:TEMP\install.ps1 -Mode agent -ServerUrl http://主控IP:25774 -Token <token>
 
   也支持 git clone 后本地运行。
 #>
@@ -19,6 +22,7 @@ param(
   [ValidateSet("server", "agent")]
   [string]$Mode,
   [int]$Port = 25774,
+  [string]$AdminUser = "",
   [string]$ServerUrl = "",
   [string]$Token = "",
   [string]$AdminPassword = ""
@@ -33,6 +37,33 @@ $VenvPython  = Join-Path $InstallDir "venv\Scripts\python.exe"
 
 function Log([string]$msg) { Write-Host "[bigcat] $msg" }
 function Die([string]$msg) { Write-Host "[bigcat] 错误: $msg" -ForegroundColor Red; exit 1 }
+
+function Read-Secret([string]$prompt, [switch]$Required) {
+  # 交互式读取密码（带确认）；Required 时不允许为空
+  while ($true) {
+    $s1 = Read-Host $prompt -AsSecureString
+    $p1 = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s1))
+    if (-not $p1) {
+      if ($Required) { Write-Host "  不能为空，请重新输入"; continue }
+      return ""
+    }
+    $s2 = Read-Host "再输入一次确认" -AsSecureString
+    $p2 = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s2))
+    if ($p1 -eq $p2) { return $p1 }
+    Write-Host "  两次输入不一致，请重新输入"
+  }
+}
+
+function Read-Required([string]$prompt) {
+  $v = ""
+  while (-not $v) {
+    $v = (Read-Host $prompt).Trim()
+    if (-not $v) { Write-Host "  不能为空，请重新输入" }
+  }
+  return $v
+}
 
 function Ensure-Sources {
   # 返回包含 server/ 和 agent/ 的源码目录
@@ -82,27 +113,37 @@ function Setup-Venv {
 }
 
 function Install-Server {
+  # ---- 交互式收集配置（参数优先）----
+  if (-not $PSBoundParameters.ContainsKey("Port")) {
+    $p = (Read-Host "服务端监听端口 [25774]").Trim()
+    if ($p) {
+      if ($p -notmatch '^\d+$') { Die "端口必须是数字" }
+      $Port = [int]$p
+    }
+  }
+  if (-not $AdminUser) {
+    $u = (Read-Host "管理员用户名 [admin]").Trim()
+    $AdminUser = if ($u) { $u } else { "admin" }
+  }
+  if (-not $PSBoundParameters.ContainsKey("AdminPassword")) {
+    $AdminPassword = Read-Secret "管理员密码（留空则跳过，可稍后设置）"
+  }
+  Log "配置: 端口=$Port, 管理员=$AdminUser"
+
   $src = Ensure-Sources
-  Log "安装服务端（端口 $Port）..."
+  Log "安装服务端..."
   New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "data") | Out-Null
   Copy-Item -Recurse -Force (Join-Path $src "server") $InstallDir
   Setup-Venv
 
-  if (-not $AdminPassword) {
-    $sec = Read-Host "设置管理密码（留空则跳过，可稍后设置）" -AsSecureString
-    if ($sec.Length -gt 0) {
-      $AdminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
-    }
-  }
   if ($AdminPassword) {
     Push-Location (Join-Path $InstallDir "server")
-    & $VenvPython app.py --db (Join-Path $InstallDir "data\bigcat.db") --set-admin $AdminPassword | Out-Null
+    & $VenvPython app.py --db (Join-Path $InstallDir "data\bigcat.db") --set-admin "$($AdminUser):$($AdminPassword)" | Out-Null
     Pop-Location
-    Log "管理密码已设置"
+    Log "管理员账号已设置（用户名: $AdminUser）"
   } else {
-    Log "未设置管理密码，稍后可用以下命令设置："
-    Log "  `"$VenvPython`" `"$InstallDir\server\app.py`" --db `"$InstallDir\data\bigcat.db`" --set-admin `"你的强密码`""
+    Log "未设置管理员账号，稍后可用以下命令设置："
+    Log "  `"$VenvPython`" `"$InstallDir\server\app.py`" --db `"$InstallDir\data\bigcat.db`" --set-admin `"用户名:密码`""
   }
 
   $taskName = "bigcat-server"
@@ -128,8 +169,9 @@ function Install-Server {
 }
 
 function Install-Agent {
-  if (-not $ServerUrl) { Die "缺少 -ServerUrl，例如 -ServerUrl http://主控IP:25774" }
-  if (-not $Token)     { Die "缺少 -Token（先在主控执行 /api/agent/register 注册节点）" }
+  # ---- 交互式收集配置（参数优先）----
+  if (-not $ServerUrl) { $ServerUrl = Read-Required "主控地址（例如 http://主控IP:25774）" }
+  if (-not $Token)     { $Token = Read-Secret "Agent token（在主控执行 /api/agent/register 获取）" -Required }
   $src = Ensure-Sources
   Log "安装 agent，上报目标 $ServerUrl ..."
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -153,12 +195,29 @@ function Install-Agent {
 }
 
 if (-not $Mode) {
-  Write-Host @"
+  # 通过 irm ... | iex 一键运行时无法传参，改为交互式选择
+  if ($Host.Name -eq "ConsoleHost") {
+    Write-Host ""
+    Write-Host "  bigcat 一键安装"
+    Write-Host "  [1] server  主控端（监控服务端）"
+    Write-Host "  [2] agent   被控端（上报本机指标）"
+    Write-Host ""
+    $c = (Read-Host "请选择 [1/2]").Trim()
+    switch ($c) {
+      "1" { $Mode = "server" }
+      "2" { $Mode = "agent" }
+      default { Die "无效选择" }
+    }
+  } else {
+    Write-Host @"
 用法（请以管理员身份运行 PowerShell）:
-  powershell -ExecutionPolicy Bypass -File install.ps1 -Mode server [-Port 端口] [-AdminPassword xxx]
-  powershell -ExecutionPolicy Bypass -File install.ps1 -Mode agent -ServerUrl http://主控IP:25774 -Token <token>
+  一键安装（交互式）: irm https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.ps1 | iex
+  非交互式:
+    powershell -ExecutionPolicy Bypass -File install.ps1 -Mode server [-Port 端口] [-AdminUser 用户名] [-AdminPassword 密码]
+    powershell -ExecutionPolicy Bypass -File install.ps1 -Mode agent -ServerUrl http://主控IP:25774 -Token <token>
 "@
-  exit 1
+    exit 1
+  }
 }
 
 switch ($Mode) {
