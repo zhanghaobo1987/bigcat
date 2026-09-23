@@ -108,9 +108,107 @@ class Storage:
                 "description": "A lightweight VPS monitor, Komari-compatible.",
                 "theme": "LuminaPlus",
                 "admin_password": "",  # set on first run via CLI
+                "notify_template": "【{event}】{message}",
+                "expiry_remind_enabled": "1",
+                "expiry_remind_days": "10",
             }
             for k, v in defaults.items():
                 cur.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (k, v))
+            self._conn.commit()
+            # ---- v3 tables (Komari-parity admin) ----
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ping_tasks (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name         TEXT NOT NULL,
+                    target       TEXT NOT NULL,
+                    type         TEXT DEFAULT 'tcp',
+                    interval_sec INTEGER DEFAULT 300,
+                    enabled      INTEGER DEFAULT 1,
+                    created_at   TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ping_results (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id    INTEGER NOT NULL,
+                    time       TEXT NOT NULL,
+                    latency_ms REAL DEFAULT 0,
+                    ok         INTEGER DEFAULT 0
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pingres_task_time ON ping_results(task_id, time)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alert_rules (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name         TEXT NOT NULL,
+                    metric       TEXT NOT NULL,
+                    threshold    REAL DEFAULT 90,
+                    ratio        REAL DEFAULT 0.8,
+                    interval_min INTEGER DEFAULT 2,
+                    enabled      INTEGER DEFAULT 1,
+                    clients      TEXT DEFAULT '[]',
+                    last_fired_at TEXT
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id         TEXT PRIMARY KEY,
+                    ip         TEXT DEFAULT '',
+                    ua         TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    last_seen  TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    time    TEXT NOT NULL,
+                    level   TEXT DEFAULT 'info',
+                    type    TEXT DEFAULT '',
+                    message TEXT DEFAULT ''
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_events_time ON events(time)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS exec_tasks (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_uuid TEXT NOT NULL,
+                    command     TEXT NOT NULL,
+                    status      TEXT DEFAULT 'pending',
+                    output      TEXT DEFAULT '',
+                    created_at  TEXT NOT NULL,
+                    finished_at TEXT
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_exec_client ON exec_tasks(client_uuid)")
+            self._conn.commit()
+        self._migrate()
+
+    def _migrate(self):
+        """Additive migrations for the clients table (v3 fields)."""
+        with self._lock:
+            cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(clients)").fetchall()}
+            for col, ddl in {
+                "offline_grace": "INTEGER DEFAULT 0",
+                "notify_offline": "INTEGER DEFAULT 1",
+                "report_enabled": "INTEGER DEFAULT 0",
+                "report_types": "TEXT DEFAULT 'daily,weekly,monthly'",
+            }.items():
+                if col not in cols:
+                    self._conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {ddl}")
             self._conn.commit()
 
     # ------------------------------------------------------------------ clients
@@ -162,6 +260,7 @@ class Storage:
             "public_remark", "mem_total", "swap_total", "disk_total", "version",
             "weight", "price", "billing_cycle", "auto_renewal", "currency",
             "expired_at", "group", "tags", "hidden", "traffic_limit",
+            "offline_grace", "notify_offline", "report_enabled", "report_types",
         }
         sets, vals = [], []
         for k, v in fields.items():
@@ -320,3 +419,295 @@ class Storage:
 
     def has_admin(self) -> bool:
         return bool(self.get_setting("admin_password"))
+
+    # ------------------------------------------------------- v3: ping tasks
+    def add_ping_task(self, name, target, type="tcp", interval_sec=300, enabled=1) -> dict:
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO ping_tasks(name, target, type, interval_sec, enabled, created_at)
+                   VALUES(?, ?, ?, ?, ?, ?)""",
+                (name, target, type, interval_sec, enabled, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM ping_tasks WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return dict(row) if row else {}
+
+    def list_ping_tasks(self):
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM ping_tasks ORDER BY id ASC").fetchall()
+        return [dict(r) for r in rows]
+
+    def update_ping_task(self, task_id: int, fields: dict) -> bool:
+        allowed = {"name", "target", "type", "interval_sec", "enabled"}
+        sets, vals = [], []
+        for k, v in fields.items():
+            if k in allowed:
+                sets.append(f"{k} = ?")
+                vals.append(v)
+        if not sets:
+            return False
+        vals.append(task_id)
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE ping_tasks SET {', '.join(sets)} WHERE id = ?", vals)
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def delete_ping_task(self, task_id: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM ping_tasks WHERE id = ?", (task_id,))
+            self._conn.execute("DELETE FROM ping_results WHERE task_id = ?", (task_id,))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def insert_ping_result(self, task_id: int, latency_ms: float, ok: bool):
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO ping_results(task_id, time, latency_ms, ok) VALUES(?, ?, ?, ?)",
+                (task_id, now, latency_ms, 1 if ok else 0),
+            )
+            self._conn.commit()
+
+    def prune_ping_results(self, keep_hours: int = 72):
+        cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - keep_hours * 3600))
+        with self._lock:
+            self._conn.execute("DELETE FROM ping_results WHERE time < ?", (cutoff,))
+            self._conn.commit()
+
+    def ping_results(self, task_id: int, since_iso: str, limit: int = 500):
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM ping_results WHERE task_id = ? AND time >= ?
+                   ORDER BY time ASC LIMIT ?""", (task_id, since_iso, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def ping_stats(self, since_iso: str):
+        """Per-task stats over a window: avg/min/max latency, loss ratio, last sample."""
+        out = []
+        for t in self.list_ping_tasks():
+            with self._lock:
+                rows = self._conn.execute(
+                    """SELECT latency_ms, ok, time FROM ping_results
+                       WHERE task_id = ? AND time >= ? ORDER BY time ASC""",
+                    (t["id"], since_iso)).fetchall()
+            oks = [r["latency_ms"] for r in rows if r["ok"]]
+            total = len(rows)
+            out.append({
+                "task": t,
+                "samples": total,
+                "loss": round(1 - len(oks) / total, 4) if total else 0,
+                "avg": round(sum(oks) / len(oks), 2) if oks else 0,
+                "min": round(min(oks), 2) if oks else 0,
+                "max": round(max(oks), 2) if oks else 0,
+                "last_ms": round(oks[-1], 2) if oks else 0,
+                "last_ok": bool(rows and rows[-1]["ok"]),
+                "last_time": rows[-1]["time"] if rows else "",
+            })
+        return out
+
+    # ------------------------------------------------------- v3: alert rules
+    def add_alert_rule(self, name, metric, threshold, ratio=0.8, interval_min=2,
+                       enabled=1, clients="[]") -> dict:
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO alert_rules(name, metric, threshold, ratio, interval_min,
+                                          enabled, clients)
+                   VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                (name, metric, threshold, ratio, interval_min, enabled, clients),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM alert_rules WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return dict(row) if row else {}
+
+    def list_alert_rules(self):
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM alert_rules ORDER BY id ASC").fetchall()
+        return [dict(r) for r in rows]
+
+    def update_alert_rule(self, rule_id: int, fields: dict) -> bool:
+        allowed = {"name", "metric", "threshold", "ratio", "interval_min", "enabled", "clients"}
+        sets, vals = [], []
+        for k, v in fields.items():
+            if k in allowed:
+                sets.append(f"{k} = ?")
+                vals.append(v)
+        if not sets:
+            return False
+        vals.append(rule_id)
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE alert_rules SET {', '.join(sets)} WHERE id = ?", vals)
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def delete_alert_rule(self, rule_id: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM alert_rules WHERE id = ?", (rule_id,))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def set_rule_fired(self, rule_id: int):
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            self._conn.execute(
+                "UPDATE alert_rules SET last_fired_at = ? WHERE id = ?", (now, rule_id))
+            self._conn.commit()
+
+    # ------------------------------------------------------- v3: sessions
+    def create_session(self, sid: str, ip: str, ua: str, ttl_sec: int = 30 * 86400) -> dict:
+        now = time.time()
+        fmt = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO sessions(id, ip, ua, created_at, expires_at, last_seen)
+                   VALUES(?, ?, ?, ?, ?, ?)""",
+                (sid, ip, ua[:200], fmt(now), fmt(now + ttl_sec), fmt(now)),
+            )
+            self._conn.commit()
+            row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+        return dict(row) if row else {}
+
+    def get_session(self, sid: str):
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+        return dict(row) if row else None
+
+    def touch_session(self, sid: str):
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            self._conn.execute("UPDATE sessions SET last_seen = ? WHERE id = ?", (now, sid))
+            self._conn.commit()
+
+    def list_sessions(self):
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM sessions ORDER BY last_seen DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_all_sessions(self) -> int:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM sessions")
+            self._conn.commit()
+            return cur.rowcount
+
+    def prune_expired_sessions(self):
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            self._conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+            self._conn.commit()
+
+    # ------------------------------------------------------- v3: events
+    def log_event(self, level: str, type: str, message: str):
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO events(time, level, type, message) VALUES(?, ?, ?, ?)",
+                (now, level, type, message[:1000]),
+            )
+            self._conn.commit()
+
+    def list_events(self, limit: int = 100, offset: int = 0):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM events ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_events(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()
+        return int(row["n"]) if row else 0
+
+    def clear_events(self):
+        with self._lock:
+            self._conn.execute("DELETE FROM events")
+            self._conn.commit()
+
+    # ------------------------------------------------------- v3: exec tasks
+    def add_exec_task(self, client_uuid: str, command: str) -> dict:
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO exec_tasks(client_uuid, command, status, created_at)
+                   VALUES(?, ?, 'pending', ?)""",
+                (client_uuid, command[:2000], now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM exec_tasks WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return dict(row) if row else {}
+
+    def claim_exec_tasks(self, client_uuid: str, limit: int = 5):
+        """Agent picks up pending tasks; marked running to avoid double execution."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM exec_tasks WHERE client_uuid = ? AND status = 'pending'
+                   ORDER BY id ASC LIMIT ?""", (client_uuid, limit)).fetchall()
+            tasks = [dict(r) for r in rows]
+            for t in tasks:
+                self._conn.execute(
+                    "UPDATE exec_tasks SET status = 'running' WHERE id = ?", (t["id"],))
+            self._conn.commit()
+        return tasks
+
+    def finish_exec_task(self, task_id: int, output: str, ok: bool):
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            self._conn.execute(
+                """UPDATE exec_tasks SET status = ?, output = ?, finished_at = ?
+                   WHERE id = ?""",
+                ("done" if ok else "error", output[:20000], now, task_id),
+            )
+            self._conn.commit()
+
+    def list_exec_tasks(self, limit: int = 50):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM exec_tasks ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------- v3: analytics
+    def sum_traffic(self, client_uuid: str, since_iso: str, until_iso: str):
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT COALESCE(SUM(traffic_up),0) AS up,
+                          COALESCE(SUM(traffic_down),0) AS down,
+                          COUNT(*) AS n
+                   FROM records WHERE client = ? AND time >= ? AND time <= ?""",
+                (client_uuid, since_iso, until_iso)).fetchone()
+        return {"up": int(row["up"]), "down": int(row["down"]), "samples": int(row["n"])}
+
+    def avg_metrics(self, client_uuid: str, since_iso: str):
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT AVG(cpu) AS cpu,
+                          AVG(CASE WHEN ram_total > 0 THEN ram*100.0/ram_total END) AS mem,
+                          MAX(time) AS last
+                   FROM records WHERE client = ? AND time >= ?""",
+                (client_uuid, since_iso)).fetchone()
+        return {"cpu": round(row["cpu"] or 0, 2), "mem": round(row["mem"] or 0, 2),
+                "last": row["last"] or ""}
+
+    def traffic_series(self, since_iso: str, until_iso: str, bucket_sec: int = 900):
+        """Aggregate up/down rates into time buckets across all clients."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT time, AVG(net_out) AS up, AVG(net_in) AS down
+                   FROM records WHERE time >= ? AND time <= ?
+                   GROUP BY CAST(strftime('%s', time) / ? AS INTEGER)
+                   ORDER BY time ASC""",
+                (since_iso, until_iso, bucket_sec)).fetchall()
+        return [{"time": r["time"], "up": round(r["up"] or 0, 1),
+                 "down": round(r["down"] or 0, 1)} for r in rows]
+
+    def vacuum(self) -> dict:
+        before = self.db_size()
+        with self._lock:
+            self._conn.execute("VACUUM")
+            self._conn.commit()
+        after = self.db_size()
+        return {"before": before, "after": after,
+                "reclaimed": max(0, before - after)}

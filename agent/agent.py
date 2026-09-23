@@ -15,9 +15,16 @@ import argparse
 import json
 import platform
 import socket
+import subprocess
 import time
 import urllib.request
 import urllib.error
+
+
+# Commands an admin may run remotely. Keep this intentionally narrow:
+# single non-interactive shell commands, no redirections to system paths.
+EXEC_MAX_OUTPUT = 64 * 1024
+EXEC_TIMEOUT = 120
 
 
 def _post(url: str, payload: dict, token: str = "", timeout: int = 10) -> dict:
@@ -114,6 +121,51 @@ def collect_report(prev_net):
     return report, new_prev
 
 
+def run_exec_task(task: dict) -> dict:
+    """Run one remote-execution task. Returns {ok, output}."""
+    command = str(task.get("command", ""))[:2000]
+    try:
+        out = subprocess.run(
+            command, shell=True, capture_output=True, text=True,
+            timeout=EXEC_TIMEOUT,
+        )
+        output = (out.stdout or "") + (out.stderr or "")
+        if len(output) > EXEC_MAX_OUTPUT:
+            output = output[:EXEC_MAX_OUTPUT] + "\n…[输出已截断]"
+        return {"ok": out.returncode == 0,
+                "output": output or f"[exit {out.returncode}]"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "output": f"[超时：命令执行超过 {EXEC_TIMEOUT}s]"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "output": f"[执行失败] {e}"}
+
+
+def poll_exec_tasks(server: str, token: str):
+    """Fetch pending exec tasks from master, run them, report results back."""
+    resp = _get(f"{server}/api/agent/tasks", token=token)
+    tasks = resp.get("tasks") or []
+    for task in tasks:
+        print(f"[agent] exec task #{task.get('id')}: {str(task.get('command'))[:80]}")
+        result = run_exec_task(task)
+        _post(f"{server}/api/agent/task_result",
+              {"task_id": task.get("id"), "output": result["output"],
+               "ok": result["ok"]}, token=token)
+
+
+def _get(url: str, token: str = "", timeout: int = 10) -> dict:
+    req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        print(f"[agent] HTTP {e.code}: {e.read().decode()[:200]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[agent] request failed: {e}")
+    return {}
+
+
 def main():
     ap = argparse.ArgumentParser(description="bigcat agent")
     ap.add_argument("--server", required=True, help="master URL, e.g. http://1.2.3.4:25774")
@@ -146,6 +198,11 @@ def main():
             _post(f"{server}/api/agent/report", {"report": report}, token=args.token)
         except Exception as e:  # noqa: BLE001
             print(f"[agent] report failed: {e}")
+        # 每轮顺带轮询远程执行任务（低频操作，失败不影响上报）
+        try:
+            poll_exec_tasks(server, args.token)
+        except Exception as e:  # noqa: BLE001
+            print(f"[agent] exec poll failed: {e}")
         time.sleep(args.interval)
 
 

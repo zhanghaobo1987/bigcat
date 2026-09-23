@@ -11,42 +11,46 @@
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
   .layout { display:flex; min-height:100vh; }
-  aside { width:210px; flex-shrink:0; background:#0d131b; border-right:1px solid var(--border);
+  aside { width:220px; flex-shrink:0; background:#0d131b; border-right:1px solid var(--border);
           padding:20px 12px; position:sticky; top:0; height:100vh; overflow-y:auto; }
   aside h1 { font-size:17px; margin:0 0 4px 8px; }
-  aside .ver { font-size:11px; color:var(--muted); margin:0 0 16px 8px; }
+  aside .ver { font-size:11px; color:var(--muted); margin:0 0 12px 8px; }
   aside nav button { display:block; width:100%; text-align:left; background:transparent;
-          border:0; color:var(--muted); padding:10px 12px; border-radius:8px; font-size:14px; cursor:pointer; }
+          border:0; color:var(--muted); padding:9px 12px; border-radius:8px; font-size:14px; cursor:pointer; }
   aside nav button:hover { background:#161e29; color:var(--text); }
   aside nav button.active { background:#1c2942; color:var(--accent); }
   aside nav button .ico { margin-right:8px; }
-  main { flex:1; padding:28px; max-width:980px; }
+  aside .grp { font-size:11px; color:var(--muted); margin:14px 8px 6px; letter-spacing:1px; }
+  main { flex:1; padding:28px; max-width:1080px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
           padding:20px; margin-bottom:16px; }
   h2 { font-size:16px; margin:0 0 12px; }
+  h3 { font-size:14px; margin:16px 0 8px; }
   .muted { color:var(--muted); font-size:13px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:16px; }
   .stat { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
   .stat .num { font-size:26px; font-weight:700; }
   .stat .lbl { color:var(--muted); font-size:12px; margin-top:4px; }
-  .num.ok { color:var(--ok); } .num.bad { color:var(--danger); }
+  .num.ok { color:var(--ok); } .num.bad { color:var(--danger); } .num.warn { color:var(--warn); }
   label { display:block; margin:12px 0 4px; color:var(--muted); font-size:13px; }
-  input[type=text], input[type=password], input[type=number], select {
+  input[type=text], input[type=password], input[type=number], select, textarea {
     width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--border);
     background:#0d131b; color:var(--text); font-size:14px; }
-  input:focus, select:focus { outline:none; border-color:var(--accent); }
+  textarea { min-height:80px; resize:vertical; font-family:monospace; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); }
   input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); }
   button { cursor:pointer; border:0; border-radius:8px; padding:9px 18px;
            font-size:14px; background:var(--accent); color:#fff; }
   button:hover { filter:brightness(1.1); }
   button.ghost { background:transparent; border:1px solid var(--border); color:var(--text); }
   button.danger { background:transparent; border:1px solid var(--danger); color:var(--danger); }
+  button.warnb { background:transparent; border:1px solid var(--warn); color:var(--warn); }
   button.small { padding:5px 10px; font-size:12px; }
   .err { color:var(--danger); font-size:13px; min-height:20px; margin-top:8px; }
   .ok { color:var(--ok); font-size:13px; margin-top:8px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); }
-  th { color:var(--muted); font-weight:500; }
+  th { color:var(--muted); font-weight:500; white-space:nowrap; }
   code.cmd { display:block; background:#0d131b; border:1px solid var(--border);
              border-radius:8px; padding:10px 12px; font-size:12px; word-break:break-all;
              margin:8px 0; user-select:all; }
@@ -54,28 +58,46 @@
   .row input, .row select { flex:1; }
   .token { font-family:monospace; font-size:12px; }
   .hidden { display:none !important; }
-  .badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:12px; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:12px; white-space:nowrap; }
   .badge.on { background:rgba(63,185,80,.15); color:var(--ok); }
   .badge.off { background:rgba(248,81,73,.15); color:var(--danger); }
+  .badge.warn { background:rgba(210,153,34,.15); color:var(--warn); }
+  .badge.info { background:rgba(47,129,247,.15); color:var(--accent); }
   pre.logs { background:#0d131b; border:1px solid var(--border); border-radius:8px;
              padding:12px; font-size:12px; max-height:480px; overflow:auto; white-space:pre-wrap; }
   .center { max-width:400px; margin:8vh auto 0; }
   .center h1 { text-align:center; margin-bottom:16px; font-size:20px; }
-  .kv { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px; }
-  .kv span:first-child { color:var(--muted); }
-  .kv span:last-child { font-family:monospace; }
+  .kv { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px; gap:12px; }
+  .kv span:first-child { color:var(--muted); flex-shrink:0; }
+  .kv span:last-child { font-family:monospace; word-break:break-all; text-align:right; }
   footer { text-align:center; color:var(--muted); font-size:12px; padding:16px; }
   .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex;
-              align-items:center; justify-content:center; z-index:50; }
+              align-items:center; justify-content:center; z-index:50; padding:16px; }
   .modal { background:var(--card); border:1px solid var(--border); border-radius:12px;
-           padding:24px; width:min(440px,92vw); }
+           padding:24px; width:min(560px,94vw); max-height:90vh; overflow-y:auto; }
+  .tabs { display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:8px; flex-wrap:wrap; }
+  .tabs button { background:transparent; color:var(--muted); border:0; padding:8px 14px; }
+  .tabs button.active { color:var(--accent); border-bottom:2px solid var(--accent); border-radius:0; }
+  .form2 { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+  .warnbox { background:rgba(210,153,34,.08); border:1px solid var(--warn); border-radius:8px;
+             padding:12px; font-size:13px; margin-bottom:16px; }
+  .chk-list { display:flex; flex-wrap:wrap; gap:8px; }
+  .chk-list label { display:flex; align-items:center; gap:6px; margin:0; color:var(--text);
+                    background:#0d131b; border:1px solid var(--border); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  canvas.chart { width:100%; height:220px; }
+  details.out { margin-top:6px; }
+  details.out summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  details.out pre { background:#0d131b; border:1px solid var(--border); border-radius:8px;
+                    padding:10px; font-size:12px; max-height:300px; overflow:auto; white-space:pre-wrap; }
   @media (max-width:760px) {
     .layout { flex-direction:column; }
     aside { width:100%; height:auto; position:static; padding:12px; }
     aside nav { display:flex; overflow-x:auto; gap:4px; }
     aside nav button { white-space:nowrap; width:auto; }
+    aside .grp { display:none; }
     aside h1, aside .ver { margin-left:4px; }
     main { padding:16px; }
+    .form2 { grid-template-columns:1fr; }
   }
 </style>
 </head>
@@ -100,6 +122,10 @@
     <input id="login-user" type="text" value="admin" autocomplete="username">
     <label>密码</label>
     <input id="login-pass" type="password" autocomplete="current-password">
+    <div id="login-2fa" class="hidden">
+      <label>双重验证码（6 位）</label>
+      <input id="login-code" type="text" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+    </div>
     <div class="err" id="login-err"></div>
     <button id="btn-login" style="width:100%;margin-top:8px">登录</button>
   </div>
@@ -119,8 +145,20 @@
     <section id="page-dashboard" class="page">
       <div class="grid" id="dash-stats"></div>
       <div class="card">
+        <h2>全网流量 <span class="muted">（近 24 小时，KB/s）</span></h2>
+        <canvas class="chart" id="traffic-chart"></canvas>
+      </div>
+      <div class="card">
         <h2>离线节点 <span class="muted" id="dash-th"></span></h2>
         <div id="dash-offline"><p class="muted">加载中…</p></div>
+      </div>
+      <div class="card">
+        <h2>即将到期 <span class="muted">（30 天内）</span></h2>
+        <div id="dash-expiry"><p class="muted">加载中…</p></div>
+      </div>
+      <div class="card">
+        <h2>流量排行 <span class="muted">（近 24 小时）</span></h2>
+        <div id="dash-rank"><p class="muted">加载中…</p></div>
       </div>
     </section>
 
@@ -128,8 +166,8 @@
       <div class="card">
         <h2>服务器</h2>
         <table>
-          <thead><tr><th>状态</th><th>名称</th><th>分组</th><th>最后上报</th><th>Token</th><th>操作</th></tr></thead>
-          <tbody id="nodes-body"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+          <thead><tr><th>状态</th><th>名称</th><th>IP</th><th>分组</th><th>到期</th><th>最后上报</th><th>Token</th><th>操作</th></tr></thead>
+          <tbody id="nodes-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table>
       </div>
       <div class="card">
@@ -142,35 +180,177 @@
       </div>
     </section>
 
-    <section id="page-settings" class="page hidden">
+    <section id="page-ping" class="page hidden">
       <div class="card">
-        <h2>站点设置</h2>
-        <label>站点名称</label><input id="set-sitename" type="text">
-        <label>站点描述</label><input id="set-desc" type="text">
-        <label>离线判定（秒）：超过此时长未上报即视为离线</label>
-        <input id="set-offline-th" type="number" min="30" max="3600" step="10">
-        <label>监控数据保留（小时）</label>
-        <input id="set-keep-hours" type="number" min="1" max="720">
-        <div class="ok" id="settings-ok"></div><div class="err" id="settings-err"></div>
-        <button id="btn-save-settings" style="margin-top:12px">保存</button>
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">延迟监测任务</h2>
+          <button class="small" id="btn-add-ping">＋ 新增任务</button>
+        </div>
+        <p class="muted">由 bigcat 主控每间隔定时探测（TCP / HTTP / ICMP），结果保留 72 小时。</p>
+        <table>
+          <thead><tr><th>任务</th><th>目标</th><th>类型</th><th>间隔</th><th>最近延迟</th><th>可用率</th><th>启用</th><th>操作</th></tr></thead>
+          <tbody id="ping-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>探测记录</h2>
+        <div class="row" style="margin-bottom:12px;max-width:520px">
+          <select id="ping-hist-task"></select>
+          <select id="ping-hist-hours" style="max-width:140px">
+            <option value="1">近 1 小时</option><option value="6">近 6 小时</option>
+            <option value="24" selected>近 24 小时</option><option value="72">近 72 小时</option>
+          </select>
+          <button class="ghost small" id="btn-ping-hist">查询</button>
+        </div>
+        <div id="ping-hist"><p class="muted">选择任务后查询。</p></div>
+      </div>
+    </section>
+
+    <section id="page-alerts" class="page hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">负载告警规则</h2>
+          <button class="small" id="btn-add-alert">＋ 新增规则</button>
+        </div>
+        <p class="muted">当某指标超过阈值的样本比例 ≥ 触发比例时，经通知渠道告警；每条规则按检查间隔去重。</p>
+        <table>
+          <thead><tr><th>规则</th><th>指标</th><th>阈值</th><th>触发比例</th><th>检查间隔</th><th>适用节点</th><th>启用</th><th>操作</th></tr></thead>
+          <tbody id="alerts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+        </table>
       </div>
     </section>
 
     <section id="page-notify" class="page hidden">
-      <div class="card">
-        <h2>离线 / 上线通知</h2>
-        <p class="muted">节点状态变化（离线 / 恢复在线）时，向下方 Webhook 地址 POST JSON <code>{"text": "..."}</code>。
-        兼容 Bark / Server 酱 / 企业微信机器人等可接收 JSON 的推送服务。</p>
-        <label class="row" style="justify-content:flex-start">
-          <input id="notify-enabled" type="checkbox" style="width:16px"> <span>启用通知</span>
-        </label>
-        <label>Webhook URL</label>
-        <input id="notify-webhook" type="text" placeholder="https://…">
-        <div class="ok" id="notify-ok"></div><div class="err" id="notify-err"></div>
-        <div class="row" style="margin-top:12px;justify-content:flex-start">
-          <button id="btn-save-notify">保存</button>
-          <button class="ghost" id="btn-test-notify">发送测试</button>
+      <div class="tabs" id="notify-tabs">
+        <button data-t="channels" class="active">通知渠道</button>
+        <button data-t="general">常规设置</button>
+        <button data-t="offline">离线通知</button>
+        <button data-t="traffic">流量报告</button>
+      </div>
+      <div id="nt-channels">
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">通知渠道</h2>
+            <button class="small" id="btn-add-channel">＋ 新增渠道</button>
+          </div>
+          <p class="muted">支持 Webhook（通用 JSON <code>{"text":"..."}</code>，兼容 Bark / Server 酱 / 企业微信等可接收该格式的服务）、Telegram Bot、Bark。</p>
+          <table>
+            <thead><tr><th>名称</th><th>类型</th><th>启用</th><th>操作</th></tr></thead>
+            <tbody id="channels-body"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+          </table>
         </div>
+      </div>
+      <div id="nt-general" class="hidden">
+        <div class="card">
+          <h2>常规设置</h2>
+          <label>消息模板（{event} 为事件名，{message} 为内容）</label>
+          <input id="nt-template" type="text">
+          <div class="form2">
+            <div><label class="row" style="justify-content:flex-start">
+              <input id="nt-expiry-on" type="checkbox" style="width:16px"> <span>启用到期提醒</span></label></div>
+            <div><label>到期前提醒天数</label>
+              <input id="nt-expiry-days" type="number" min="1" max="365"></div>
+          </div>
+          <div class="ok" id="nt-gen-ok"></div><div class="err" id="nt-gen-err"></div>
+          <button id="btn-save-nt-gen" style="margin-top:12px">保存</button>
+        </div>
+        <div class="card">
+          <h2>旧版 Webhook（兼容）</h2>
+          <p class="muted">v1.x 的单 Webhook 配置会自动迁移为一个通知渠道，可在上方管理。</p>
+          <label class="row" style="justify-content:flex-start">
+            <input id="notify-enabled" type="checkbox" style="width:16px"> <span>启用通知（旧开关，迁移后可忽略）</span>
+          </label>
+          <label>Webhook URL</label>
+          <input id="notify-webhook" type="text" placeholder="https://…">
+          <div class="ok" id="notify-ok"></div><div class="err" id="notify-err"></div>
+          <div class="row" style="margin-top:12px;justify-content:flex-start">
+            <button id="btn-save-notify">保存</button>
+            <button class="ghost" id="btn-test-notify">发送测试</button>
+          </div>
+        </div>
+      </div>
+      <div id="nt-offline" class="hidden">
+        <div class="card">
+          <h2>离线通知 <span class="muted">（按节点）</span></h2>
+          <table>
+            <thead><tr><th>节点</th><th>状态</th><th>离线通知</th><th>离线宽限（秒）</th><th>操作</th></tr></thead>
+            <tbody id="offline-body"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="nt-traffic" class="hidden">
+        <div class="card">
+          <h2>流量报告 <span class="muted">（按节点定时推送）</span></h2>
+          <table>
+            <thead><tr><th>节点</th><th>启用</th><th>日报</th><th>周报</th><th>月报</th></tr></thead>
+            <tbody id="traffic-body"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+          </table>
+          <div class="ok" id="traffic-ok"></div>
+          <button id="btn-save-traffic" style="margin-top:12px">保存全部</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-exec" class="page hidden">
+      <div class="card">
+        <h2>远程执行</h2>
+        <div class="warnbox">⚠️ 命令将以 <b>agent 进程权限</b> 在选中节点上执行，请确认命令安全。输出上限 64KB，超时 120 秒。</div>
+        <label>目标节点</label>
+        <div class="chk-list" id="exec-nodes"><span class="muted">加载中…</span></div>
+        <label>命令</label>
+        <textarea id="exec-cmd" placeholder="例如：uptime&#10;df -h /&#10;systemctl restart nginx"></textarea>
+        <div class="err" id="exec-err"></div>
+        <button id="btn-exec-run" style="margin-top:12px">下发执行</button>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">执行记录</h2>
+          <button class="ghost small" id="btn-exec-refresh">刷新</button>
+        </div>
+        <table>
+          <thead><tr><th>时间</th><th>节点</th><th>命令</th><th>状态</th><th>输出</th></tr></thead>
+          <tbody id="exec-body"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="page-events" class="page hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">事件日志</h2>
+          <button class="danger small" id="btn-events-clear">清空</button>
+        </div>
+        <p class="muted">记录节点上下线、告警触发、通知发送、登录、远程执行等关键事件。</p>
+        <table>
+          <thead><tr><th>时间</th><th>级别</th><th>类型</th><th>内容</th></tr></thead>
+          <tbody id="events-body"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+        </table>
+        <div class="row" style="margin-top:12px;justify-content:flex-end">
+          <button class="ghost small" id="btn-events-prev">上一页</button>
+          <span class="muted" id="events-page"></span>
+          <button class="ghost small" id="btn-events-next">下一页</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-database" class="page hidden">
+      <div class="card">
+        <h2>数据库</h2>
+        <div id="db-info"><p class="muted">加载中…</p></div>
+      </div>
+      <div class="card">
+        <h2>数据清理</h2>
+        <label>监控数据保留（小时）</label>
+        <input id="db-keep-hours" type="number" min="1" max="720" style="max-width:200px">
+        <p class="muted">超过保留时长的主机监控记录将被自动删除（每小时检查一次）。延迟探测结果固定保留 72 小时。</p>
+        <div class="ok" id="db-ok"></div>
+        <button id="btn-db-save">保存</button>
+      </div>
+      <div class="card">
+        <h2>压缩数据库（VACUUM）</h2>
+        <p class="muted">回收删除数据后留下的空间。执行期间会短暂锁定数据库。</p>
+        <div class="ok" id="vacuum-ok"></div>
+        <button id="btn-vacuum">开始压缩</button>
       </div>
     </section>
 
@@ -179,7 +359,7 @@
         <h2>会话管理</h2>
         <div id="sess-info"><p class="muted">加载中…</p></div>
         <button class="danger" id="btn-revoke-sess" style="margin-top:12px">退出所有会话（含本机）</button>
-        <p class="muted">使所有已登录后台的设备全部失效，需重新登录。</p>
+        <p class="muted">删除全部登录会话，所有设备（包括本机）立即失效，需重新登录。</p>
       </div>
     </section>
 
@@ -198,11 +378,28 @@
         <div class="ok" id="acc-ok"></div><div class="err" id="acc-err"></div>
         <button id="btn-save-acc" style="margin-top:12px">保存</button>
       </div>
+      <div class="card">
+        <h2>双重认证（2FA）</h2>
+        <p class="muted">启用后，登录除密码外还需输入验证器 App（Google Authenticator / 1Password 等）中的 6 位验证码。</p>
+        <div id="tfa-box"><p class="muted">加载中…</p></div>
+      </div>
+    </section>
+
+    <section id="page-settings" class="page hidden">
+      <div class="card">
+        <h2>站点设置</h2>
+        <label>站点名称</label><input id="set-sitename" type="text">
+        <label>站点描述</label><input id="set-desc" type="text">
+        <label>离线判定（秒）：超过此时长未上报即视为离线</label>
+        <input id="set-offline-th" type="number" min="30" max="3600" step="10">
+        <div class="ok" id="settings-ok"></div><div class="err" id="settings-err"></div>
+        <button id="btn-save-settings" style="margin-top:12px">保存</button>
+      </div>
     </section>
 
     <section id="page-logs" class="page hidden">
       <div class="card">
-        <h2>日志</h2>
+        <h2>系统日志</h2>
         <div class="row" style="margin-bottom:12px">
           <select id="log-lines" style="max-width:160px">
             <option value="100">最近 100 行</option>
@@ -221,10 +418,6 @@
         <h2>关于</h2>
         <div id="about-body"><p class="muted">加载中…</p></div>
       </div>
-      <div class="card">
-        <h2>路线图</h2>
-        <p class="muted">以下 Komari 后台功能需要 agent 协议升级，暂未实现：远程执行、延迟监测任务、终端、文件管理、插件系统。欢迎在 GitHub 提需求。</p>
-      </div>
     </section>
 
     <footer id="ver-foot"></footer>
@@ -236,16 +429,118 @@
   <div class="modal">
     <h2>编辑节点</h2>
     <input id="edit-uuid" type="hidden">
-    <label>名称</label><input id="edit-name" type="text">
-    <label>分组</label><input id="edit-group" type="text" placeholder="例如 香港">
+    <div class="form2">
+      <div><label>名称</label><input id="edit-name" type="text"></div>
+      <div><label>分组</label><input id="edit-group" type="text" placeholder="例如 香港"></div>
+    </div>
     <label>备注</label><input id="edit-remark" type="text">
+    <div class="form2">
+      <div><label>价格</label><input id="edit-price" type="number" min="0" step="0.01"></div>
+      <div><label>货币</label><input id="edit-currency" type="text" placeholder="USD"></div>
+      <div><label>计费周期</label>
+        <select id="edit-cycle">
+          <option value="">未设置</option><option value="monthly">月付</option>
+          <option value="quarterly">季付</option><option value="yearly">年付</option>
+          <option value="one-time">一次性</option>
+        </select></div>
+      <div><label>到期日期</label><input id="edit-expired" type="text" placeholder="2027-01-01"></div>
+    </div>
     <label class="row" style="justify-content:flex-start">
-      <input id="edit-hidden" type="checkbox" style="width:16px"> <span>在前台隐藏此节点</span>
-    </label>
+      <input id="edit-renew" type="checkbox" style="width:16px"> <span>自动续费</span></label>
+    <label>流量限额（GB，0 为不限）</label><input id="edit-limit" type="number" min="0" step="1">
+    <label>离线宽限（秒，0 为使用全局设置）</label><input id="edit-grace" type="number" min="0" step="10">
+    <div class="form2">
+      <div><label class="row" style="justify-content:flex-start">
+        <input id="edit-hidden" type="checkbox" style="width:16px"> <span>在前台隐藏</span></label></div>
+      <div><label class="row" style="justify-content:flex-start">
+        <input id="edit-noff" type="checkbox" style="width:16px"> <span>启用离线通知</span></label></div>
+    </div>
     <div class="err" id="edit-err"></div>
     <div class="row" style="margin-top:16px;justify-content:flex-end">
       <button class="ghost" id="btn-edit-cancel">取消</button>
       <button id="btn-edit-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 延迟任务弹窗 -->
+<div id="modal-ping" class="modal-bg hidden">
+  <div class="modal">
+    <h2 id="ping-modal-title">新增延迟任务</h2>
+    <input id="ping-id" type="hidden">
+    <label>任务名称</label><input id="ping-name" type="text" placeholder="例如 上海电信">
+    <label>探测目标</label><input id="ping-target" type="text" placeholder="TCP：1.2.3.4:80 ／ HTTP：https://example.com ／ ICMP：1.2.3.4">
+    <div class="form2">
+      <div><label>类型</label>
+        <select id="ping-type"><option value="tcp">TCP</option><option value="http">HTTP</option><option value="icmp">ICMP</option></select></div>
+      <div><label>探测间隔（秒）</label><input id="ping-interval" type="number" min="30" value="300"></div>
+    </div>
+    <label class="row" style="justify-content:flex-start">
+      <input id="ping-enabled" type="checkbox" style="width:16px" checked> <span>启用</span></label>
+    <div class="err" id="ping-err"></div>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button class="ghost" id="btn-ping-cancel">取消</button>
+      <button id="btn-ping-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 告警规则弹窗 -->
+<div id="modal-alert" class="modal-bg hidden">
+  <div class="modal">
+    <h2 id="alert-modal-title">新增告警规则</h2>
+    <input id="alert-id" type="hidden">
+    <label>规则名称</label><input id="alert-name" type="text" placeholder="例如 CPU 持续过高">
+    <div class="form2">
+      <div><label>监控指标</label>
+        <select id="alert-metric"><option value="cpu">CPU 使用率 %</option><option value="ram">内存使用率 %</option><option value="disk">磁盘使用率 %</option></select></div>
+      <div><label>阈值（%）</label><input id="alert-threshold" type="number" min="1" max="100" value="90"></div>
+      <div><label>触发比例（0.1-1）</label><input id="alert-ratio" type="number" min="0.1" max="1" step="0.1" value="0.8"></div>
+      <div><label>检查间隔（分钟）</label><input id="alert-interval" type="number" min="1" value="2"></div>
+    </div>
+    <label>适用节点（不选 = 全部节点）</label>
+    <div class="chk-list" id="alert-nodes"><span class="muted">加载中…</span></div>
+    <label class="row" style="justify-content:flex-start">
+      <input id="alert-enabled" type="checkbox" style="width:16px" checked> <span>启用</span></label>
+    <div class="err" id="alert-err"></div>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button class="ghost" id="btn-alert-cancel">取消</button>
+      <button id="btn-alert-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 通知渠道弹窗 -->
+<div id="modal-channel" class="modal-bg hidden">
+  <div class="modal">
+    <h2 id="channel-modal-title">新增通知渠道</h2>
+    <input id="channel-idx" type="hidden">
+    <label>渠道名称</label><input id="channel-name" type="text" placeholder="例如 我的 Bark">
+    <label>类型</label>
+    <select id="channel-type">
+      <option value="webhook">Webhook（通用 JSON）</option>
+      <option value="telegram">Telegram Bot</option>
+      <option value="bark">Bark</option>
+    </select>
+    <div id="cfg-webhook">
+      <label>Webhook URL（POST JSON {"text":"..."}）</label>
+      <input id="cfg-wh-url" type="text" placeholder="https://…">
+    </div>
+    <div id="cfg-telegram" class="hidden">
+      <label>Bot Token</label><input id="cfg-tg-token" type="text" placeholder="123456:ABC-DEF…">
+      <label>Chat ID</label><input id="cfg-tg-chat" type="text" placeholder="123456789">
+    </div>
+    <div id="cfg-bark" class="hidden">
+      <label>Bark Key</label><input id="cfg-bark-key" type="text" placeholder="abcdef…">
+      <label>Bark 服务器（默认 https://api.day.app）</label>
+      <input id="cfg-bark-server" type="text" placeholder="https://api.day.app">
+    </div>
+    <label class="row" style="justify-content:flex-start">
+      <input id="channel-enabled" type="checkbox" style="width:16px" checked> <span>启用</span></label>
+    <div class="err" id="channel-err"></div>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button class="ghost" id="btn-channel-cancel">取消</button>
+      <button id="btn-channel-save">保存</button>
     </div>
   </div>
 </div>
@@ -266,8 +561,8 @@ function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
   {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtSize(b) {
   if (b == null) return '-';
-  const u = ['B','KB','MB','GB']; let i = 0;
-  while (b >= 1024 && i < 3) { b /= 1024; i++; }
+  const u = ['B','KB','MB','GB','TB']; let i = 0;
+  while (b >= 1024 && i < 4) { b /= 1024; i++; }
   return b.toFixed(2) + ' ' + u[i];
 }
 function fmtTime(iso) {
@@ -279,8 +574,13 @@ function fmtTime(iso) {
   if (s < 86400) return Math.floor(s/3600) + ' 小时前';
   return Math.floor(s/86400) + ' 天前';
 }
+function fmtDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso); if (isNaN(d)) return iso;
+  return d.toLocaleString('zh-CN', {hour12:false});
+}
 function show(id) {
-  ['view-auth'].forEach(v => $(v).classList.add('hidden'));
+  $('view-auth').classList.add('hidden');
   $('view-main').classList.add('hidden');
   $(id).classList.remove('hidden');
 }
@@ -288,14 +588,24 @@ function needLogin() {
   show('view-auth');
   $('auth-setup').classList.add('hidden');
   $('auth-login').classList.remove('hidden');
+  $('login-2fa').classList.add('hidden');
+  $('login-err').textContent = '登录已过期，请重新登录';
 }
+function closeModals() {
+  document.querySelectorAll('.modal-bg').forEach(m => m.classList.add('hidden'));
+}
+document.querySelectorAll('.modal-bg').forEach(m =>
+  m.addEventListener('click', e => { if (e.target === m) m.classList.add('hidden'); }));
 
 /* ---------------- 菜单 ---------------- */
 const PAGES = [
   ['dashboard', '📊', '仪表板'], ['servers', '🖥️', '服务器'],
-  ['settings', '⚙️', '设置'], ['notify', '🔔', '通知'],
+  ['ping', '📡', '延迟监测'], ['alerts', '🚨', '告警规则'],
+  ['exec', '⌨️', '远程执行'],
+  ['notify', '🔔', '通知'], ['events', '📝', '事件日志'],
+  ['database', '💾', '数据库'],
   ['sessions', '👥', '会话管理'], ['account', '👤', '账户'],
-  ['logs', '📜', '日志'], ['about', 'ℹ️', '关于'],
+  ['settings', '⚙️', '设置'], ['logs', '📜', '系统日志'], ['about', 'ℹ️', '关于'],
 ];
 let curPage = 'dashboard';
 function buildNav() {
@@ -303,13 +613,12 @@ function buildNav() {
     `<button data-p="${k}" class="${k===curPage?'active':''}"><span class="ico">${ico}</span>${name}</button>`).join('');
   document.querySelectorAll('#nav button').forEach(b => b.onclick = () => go(b.dataset.p));
 }
+const LOADERS = {};
 function go(p) {
   curPage = p; buildNav();
   document.querySelectorAll('.page').forEach(x => x.classList.add('hidden'));
   $('page-' + p).classList.remove('hidden');
-  ({dashboard: loadDashboard, servers: loadNodes, settings: loadSettings,
-    notify: loadNotify, sessions: loadSessions, account: loadAccount,
-    logs: loadLogs, about: loadAbout}[p] || (() => {}))();
+  (LOADERS[p] || (() => {}))();
 }
 
 /* ---------------- 初始化 ---------------- */
@@ -345,9 +654,29 @@ $('btn-login').onclick = async () => {
   const u = $('login-user').value.trim(), p = $('login-pass').value;
   $('login-err').textContent = '';
   const {status, data} = await api('/api/admin/login', 'POST', {username: u, password: p});
-  if (status === 200 && data.ok) enterMain(data);
-  else $('login-err').textContent = '用户名或密码错误';
+  if (status === 200 && data.ok) { enterMain(data); return; }
+  if (status === 200 && data.need_2fa) {
+    $('login-2fa').classList.remove('hidden');
+    $('login-err').textContent = '请输入双重验证码';
+    $('login-code').focus();
+    return;
+  }
+  $('login-err').textContent = '用户名或密码错误';
 };
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  if (!$('view-auth').classList.contains('hidden')) {
+    if (!$('login-2fa').classList.contains('hidden')) doLogin2fa();
+  }
+});
+async function doLogin2fa() {
+  const code = $('login-code').value.trim();
+  $('login-err').textContent = '';
+  if (!code) { $('login-err').textContent = '请输入验证码'; return; }
+  const {status, data} = await api('/api/admin/login/2fa', 'POST', {code});
+  if (status === 200 && data.ok) { $('login-code').value = ''; $('login-2fa').classList.add('hidden'); enterMain(data); }
+  else $('login-err').textContent = '验证码错误';
+}
 $('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
 $('btn-logout').onclick = async () => { await api('/api/admin/logout', 'POST'); needLogin(); };
 
@@ -357,6 +686,33 @@ function enterMain(data) {
 }
 
 /* ---------------- 仪表板 ---------------- */
+function drawChart(canvas, labels, up, down) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  const max = Math.max(1, ...up, ...down);
+  const px = i => 8 + (w - 16) * i / Math.max(1, labels.length - 1);
+  const py = v => h - 24 - (h - 40) * v / max;
+  ctx.strokeStyle = '#232d3a'; ctx.fillStyle = '#8b98a9'; ctx.font = '10px sans-serif';
+  for (let g = 0; g <= 4; g++) {
+    const y = 8 + (h - 40) * g / 4;
+    ctx.beginPath(); ctx.moveTo(8, y); ctx.lineTo(w - 8, y); ctx.stroke();
+    ctx.fillText(fmtSize(max * (1 - g / 4)) + '/s', 10, y - 2);
+  }
+  const line = (arr, color) => {
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+    arr.forEach((v, i) => i ? ctx.lineTo(px(i), py(v)) : ctx.moveTo(px(i), py(v)));
+    ctx.stroke();
+  };
+  line(up, '#3fb950'); line(down, '#2f81f7');
+  ctx.fillStyle = '#8b98a9';
+  const step = Math.ceil(labels.length / 8);
+  labels.forEach((l, i) => { if (i % step === 0) ctx.fillText(l, px(i) - 10, h - 8); });
+  ctx.fillStyle = '#3fb950'; ctx.fillText('— 上行', w - 110, 16);
+  ctx.fillStyle = '#2f81f7'; ctx.fillText('— 下行', w - 60, 16);
+}
 async function loadDashboard() {
   const {status, data} = await api('/api/admin/dashboard');
   if (status === 401) return needLogin();
@@ -364,6 +720,7 @@ async function loadDashboard() {
     <div class="stat"><div class="num">${data.total}</div><div class="lbl">节点总数</div></div>
     <div class="stat"><div class="num ok">${data.online}</div><div class="lbl">在线</div></div>
     <div class="stat"><div class="num ${data.offline ? 'bad' : ''}">${data.offline}</div><div class="lbl">离线</div></div>
+    <div class="stat"><div class="num ${data.expiry_soon && data.expiry_soon.length ? 'warn' : ''}">${(data.expiry_soon||[]).length}</div><div class="lbl">30天内到期</div></div>
     <div class="stat"><div class="num">${fmtSize(data.db_size)}</div><div class="lbl">数据库占用</div></div>
     <div class="stat"><div class="num">${data.records}</div><div class="lbl">监控记录数</div></div>
     <div class="stat"><div class="num">${data.reports_today}</div><div class="lbl">今日上报次数</div></div>`;
@@ -373,26 +730,51 @@ async function loadDashboard() {
       data.offline_nodes.map(n => `<tr><td>${esc(n.name)}</td><td>${fmtTime(n.last_report_at)} <span class="muted">${esc(n.last_report_at||'')}</span></td></tr>`).join('') +
       `</tbody></table>`
     : '<p class="muted">全部节点在线 🎉</p>';
+  $('dash-expiry').innerHTML = (data.expiry_soon||[]).length
+    ? `<table><thead><tr><th>节点</th><th>到期日</th><th>剩余</th></tr></thead><tbody>` +
+      data.expiry_soon.map(n => `<tr><td>${esc(n.name)}</td><td>${esc(n.expired_at)}</td>
+        <td><span class="badge ${n.days <= 7 ? 'off' : 'warn'}">${n.days} 天</span></td></tr>`).join('') +
+      `</tbody></table>`
+    : '<p class="muted">暂无即将到期的节点</p>';
+  const t = await api('/api/admin/stats/traffic?hours=24');
+  if (t.status === 200 && t.data.labels) drawChart($('traffic-chart'), t.data.labels, t.data.up, t.data.down);
+  const r = await api('/api/admin/stats/rank?hours=24');
+  if (r.status === 200) {
+    const rows = [...r.data].sort((a,b) => b.total - a.total).slice(0, 8);
+    $('dash-rank').innerHTML = rows.length
+      ? `<table><thead><tr><th>节点</th><th>上行</th><th>下行</th><th>合计</th><th>平均 CPU</th></tr></thead><tbody>` +
+        rows.map(x => `<tr><td>${esc(x.name)} ${x.online?'':'<span class="badge off">离线</span>'}</td>
+          <td>${fmtSize(x.up)}</td><td>${fmtSize(x.down)}</td><td>${fmtSize(x.total)}</td><td>${x.avg_cpu}%</td></tr>`).join('') +
+        `</tbody></table>`
+      : '<p class="muted">暂无数据</p>';
+  }
 }
+LOADERS.dashboard = loadDashboard;
 
 /* ---------------- 服务器 ---------------- */
 let nodesCache = [];
+function expiryBadge(days) {
+  if (days == null) return '<span class="muted">-</span>';
+  if (days < 0) return `<span class="badge off">已过期 ${-days} 天</span>`;
+  if (days <= 7) return `<span class="badge off">${days} 天</span>`;
+  if (days <= 30) return `<span class="badge warn">${days} 天</span>`;
+  return `<span class="badge on">${days} 天</span>`;
+}
 async function loadNodes() {
-  const {status, data} = await api('/api/admin/dashboard');
+  const {data: clients, status} = await api('/api/admin/clients');
   if (status === 401) return needLogin();
-  const {data: clients, status: s2} = await api('/api/admin/clients');
-  if (s2 === 401) return needLogin();
-  const onMap = {}; (data.nodes || []).forEach(n => onMap[n.uuid] = n);
   nodesCache = clients;
   const tb = $('nodes-body');
-  if (!clients.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">暂无节点，点击下方添加。</td></tr>'; return; }
+  if (!clients.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">暂无节点，点击下方添加。</td></tr>'; return; }
   tb.innerHTML = clients.map(c => {
-    const on = onMap[c.uuid] ? onMap[c.uuid].online : null;
     const masked = '••••••••' + String(c.token || '').slice(-6);
+    const ips = [c.ipv4, c.ipv6].filter(Boolean).join('<br>') || '-';
     return `<tr>
-      <td>${on === null ? '-' : `<span class="badge ${on?'on':'off'}">${on?'在线':'离线'}</span>`}</td>
+      <td><span class="badge ${c.online?'on':'off'}">${c.online?'在线':'离线'}</span></td>
       <td>${esc(c.name || '(未命名)')}${c.hidden ? ' <span class="muted">(隐藏)</span>' : ''}</td>
+      <td style="font-size:12px">${ips}</td>
       <td>${esc(c.group || '-')}</td>
+      <td>${expiryBadge(c.days_to_expiry)}</td>
       <td>${fmtTime(c.last_report_at)}</td>
       <td><span class="token" id="tok-${esc(c.uuid)}">${masked}</span>
         <button class="ghost small" onclick="toggleToken('${esc(c.uuid)}','${esc(c.token)}')">显示</button>
@@ -401,6 +783,7 @@ async function loadNodes() {
         <button class="danger small" onclick="delNode('${esc(c.uuid)}','${esc(c.name||'')}')">删除</button></td></tr>`;
   }).join('');
 }
+LOADERS.servers = loadNodes;
 window.toggleToken = (uuid, token) => {
   const el = $('tok-' + uuid);
   el.textContent = (el.textContent === token) ? ('••••••••' + token.slice(-6)) : token;
@@ -417,22 +800,38 @@ window.openEdit = uuid => {
   $('edit-name').value = c.name || '';
   $('edit-group').value = c.group || '';
   $('edit-remark').value = c.remark || '';
+  $('edit-price').value = c.price || '';
+  $('edit-currency').value = c.currency || '';
+  $('edit-cycle').value = c.billing_cycle || '';
+  $('edit-expired').value = (c.expired_at || '').slice(0, 10);
+  $('edit-renew').checked = !!c.auto_renewal;
+  $('edit-limit').value = c.traffic_limit ? (c.traffic_limit / 1073741824) : '';
+  $('edit-grace').value = c.offline_grace || '';
   $('edit-hidden').checked = !!c.hidden;
+  $('edit-noff').checked = c.notify_offline !== 0;
   $('edit-err').textContent = '';
   $('modal-edit').classList.remove('hidden');
 };
-$('btn-edit-cancel').onclick = () => $('modal-edit').classList.add('hidden');
-$('modal-edit').addEventListener('click', e => { if (e.target.id === 'modal-edit') $('modal-edit').classList.add('hidden'); });
+$('btn-edit-cancel').onclick = closeModals;
 $('btn-edit-save').onclick = async () => {
   const uuid = $('edit-uuid').value;
+  const limGB = parseFloat($('edit-limit').value);
   const {status, data} = await api('/api/admin/client/' + uuid, 'POST', {
     name: $('edit-name').value.trim(),
     group: $('edit-group').value.trim(),
     remark: $('edit-remark').value.trim(),
+    price: parseFloat($('edit-price').value) || 0,
+    currency: $('edit-currency').value.trim(),
+    billing_cycle: $('edit-cycle').value,
+    expired_at: $('edit-expired').value.trim(),
+    auto_renewal: $('edit-renew').checked ? 1 : 0,
+    traffic_limit: limGB > 0 ? Math.round(limGB * 1073741824) : 0,
+    offline_grace: parseInt($('edit-grace').value) || 0,
     hidden: $('edit-hidden').checked ? 1 : 0,
+    notify_offline: $('edit-noff').checked ? 1 : 0,
   });
   if (status === 401) return needLogin();
-  if (data && data.ok) { $('modal-edit').classList.add('hidden'); loadNodes(); }
+  if (data && data.ok) { closeModals(); loadNodes(); }
   else $('edit-err').textContent = '保存失败';
 };
 $('btn-add-node').onclick = async () => {
@@ -451,39 +850,258 @@ $('btn-add-node').onclick = async () => {
   } else box.innerHTML = '<div class="err">创建失败</div>';
 };
 
-/* ---------------- 设置 ---------------- */
-async function loadSettings() {
-  const {status, data} = await api('/api/admin/settings');
+/* ---------------- 延迟监测 ---------------- */
+let pingCache = [];
+async function loadPing() {
+  const {status, data} = await api('/api/admin/ping/tasks');
   if (status === 401) return needLogin();
-  $('set-sitename').value = data.sitename || '';
-  $('set-desc').value = data.description || '';
-  $('set-offline-th').value = data.offline_threshold || 180;
-  $('set-keep-hours').value = data.record_keep_hours || 24;
+  pingCache = data;
+  const st = await api('/api/admin/stats/ping?hours=24');
+  const smap = {};
+  (st.status === 200 ? st.data : []).forEach(s => smap[s.task_id] = s);
+  const tb = $('ping-body');
+  tb.innerHTML = data.length ? data.map(t => {
+    const s = smap[t.id];
+    return `<tr>
+      <td>${esc(t.name)}</td><td class="token">${esc(t.target)}</td>
+      <td>${esc(t.type).toUpperCase()}</td><td>${t.interval_sec}s</td>
+      <td>${s ? s.avg_ms + ' ms' : '-'}</td>
+      <td>${s ? (s.uptime_pct + '%') : '-'}</td>
+      <td><span class="badge ${t.enabled?'on':'off'}">${t.enabled?'启用':'停用'}</span></td>
+      <td><button class="ghost small" onclick="openPingEdit(${t.id})">编辑</button>
+        <button class="danger small" onclick="delPing(${t.id},'${esc(t.name)}')">删除</button></td></tr>`;
+  }).join('') : '<tr><td colspan="8" class="muted">暂无任务，点击右上新增。</td></tr>';
+  $('ping-hist-task').innerHTML = data.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
 }
-$('btn-save-settings').onclick = async () => {
-  $('settings-ok').textContent = ''; $('settings-err').textContent = '';
-  const {status, data} = await api('/api/admin/settings', 'POST', {
-    sitename: $('set-sitename').value, description: $('set-desc').value,
-    offline_threshold: $('set-offline-th').value, record_keep_hours: $('set-keep-hours').value });
+LOADERS.ping = loadPing;
+$('btn-add-ping').onclick = () => {
+  $('ping-modal-title').textContent = '新增延迟任务';
+  $('ping-id').value = ''; $('ping-name').value = ''; $('ping-target').value = '';
+  $('ping-type').value = 'tcp'; $('ping-interval').value = 300; $('ping-enabled').checked = true;
+  $('ping-err').textContent = '';
+  $('modal-ping').classList.remove('hidden');
+};
+window.openPingEdit = id => {
+  const t = pingCache.find(x => x.id === id); if (!t) return;
+  $('ping-modal-title').textContent = '编辑延迟任务';
+  $('ping-id').value = t.id; $('ping-name').value = t.name; $('ping-target').value = t.target;
+  $('ping-type').value = t.type; $('ping-interval').value = t.interval_sec;
+  $('ping-enabled').checked = !!t.enabled;
+  $('ping-err').textContent = '';
+  $('modal-ping').classList.remove('hidden');
+};
+$('btn-ping-cancel').onclick = closeModals;
+$('btn-ping-save').onclick = async () => {
+  const id = $('ping-id').value;
+  const body = {
+    name: $('ping-name').value.trim(), target: $('ping-target').value.trim(),
+    type: $('ping-type').value, interval_sec: $('ping-interval').value,
+    enabled: $('ping-enabled').checked ? '1' : '0',
+  };
+  $('ping-err').textContent = '';
+  if (!body.name || !body.target) { $('ping-err').textContent = '名称和目标必填'; return; }
+  const {status, data} = id
+    ? await api('/api/admin/ping/tasks/' + id, 'PUT', body)
+    : await api('/api/admin/ping/tasks', 'POST', body);
   if (status === 401) return needLogin();
-  if (status === 200 && data.ok) $('settings-ok').textContent = '已保存';
-  else $('settings-err').textContent = '保存失败';
+  if (data && (data.ok || data.id)) { closeModals(); loadPing(); }
+  else $('ping-err').textContent = (data && data.error) || '保存失败';
+};
+window.delPing = async (id, name) => {
+  if (!confirm('确定删除延迟任务「' + name + '」吗？')) return;
+  await api('/api/admin/ping/tasks/' + id, 'DELETE');
+  loadPing();
+};
+$('btn-ping-hist').onclick = async () => {
+  const tid = $('ping-hist-task').value, hours = $('ping-hist-hours').value;
+  if (!tid) return;
+  const {status, data} = await api(`/api/admin/ping/results?task_id=${tid}&hours=${hours}`);
+  if (status === 401) return needLogin();
+  $('ping-hist').innerHTML = data.length
+    ? `<table><thead><tr><th>时间</th><th>延迟</th><th>状态</th></tr></thead><tbody>` +
+      data.slice(0, 100).map(r => `<tr><td>${fmtDate(r.time)}</td>
+        <td>${r.ok ? r.latency_ms + ' ms' : '-'}</td>
+        <td><span class="badge ${r.ok?'on':'off'}">${r.ok?'成功':'失败'}</span></td></tr>`).join('') +
+      `</tbody></table><p class="muted">共 ${data.length} 条，最多显示 100 条</p>`
+    : '<p class="muted">暂无探测记录</p>';
+};
+
+/* ---------------- 告警规则 ---------------- */
+let alertCache = [];
+const METRIC_NAMES = {cpu: 'CPU 使用率', ram: '内存使用率', disk: '磁盘使用率'};
+async function loadAlerts() {
+  const {status, data} = await api('/api/admin/alerts');
+  if (status === 401) return needLogin();
+  alertCache = data;
+  const tb = $('alerts-body');
+  tb.innerHTML = data.length ? data.map(r => {
+    let scope = '全部节点';
+    try { const cl = JSON.parse(r.clients || '[]'); if (cl.length) scope = cl.length + ' 个节点'; } catch(e) {}
+    return `<tr>
+      <td>${esc(r.name)}</td><td>${METRIC_NAMES[r.metric] || r.metric}</td>
+      <td>&gt; ${r.threshold}%</td><td>${Math.round(r.ratio * 100)}%</td>
+      <td>${r.interval_min} 分钟</td><td>${scope}</td>
+      <td><span class="badge ${r.enabled?'on':'off'}">${r.enabled?'启用':'停用'}</span></td>
+      <td><button class="ghost small" onclick="openAlertEdit(${r.id})">编辑</button>
+        <button class="danger small" onclick="delAlert(${r.id},'${esc(r.name)}')">删除</button></td></tr>`;
+  }).join('') : '<tr><td colspan="8" class="muted">暂无规则，点击右上新增。</td></tr>';
+}
+LOADERS.alerts = loadAlerts;
+function alertNodeChecks(selected) {
+  $('alert-nodes').innerHTML = nodesCache.length
+    ? nodesCache.map(c => `<label><input type="checkbox" value="${esc(c.uuid)}" ${selected.includes(c.uuid)?'checked':''}> ${esc(c.name||c.uuid.slice(0,8))}</label>`).join('')
+    : '<span class="muted">暂无节点（将应用于全部节点）</span>';
+}
+$('btn-add-alert').onclick = async () => {
+  $('alert-modal-title').textContent = '新增告警规则';
+  $('alert-id').value = ''; $('alert-name').value = ''; $('alert-metric').value = 'cpu';
+  $('alert-threshold').value = 90; $('alert-ratio').value = 0.8; $('alert-interval').value = 2;
+  $('alert-enabled').checked = true; $('alert-err').textContent = '';
+  const {data} = await api('/api/admin/clients'); nodesCache = data || [];
+  alertNodeChecks([]);
+  $('modal-alert').classList.remove('hidden');
+};
+window.openAlertEdit = async id => {
+  const r = alertCache.find(x => x.id === id); if (!r) return;
+  $('alert-modal-title').textContent = '编辑告警规则';
+  $('alert-id').value = r.id; $('alert-name').value = r.name; $('alert-metric').value = r.metric;
+  $('alert-threshold').value = r.threshold; $('alert-ratio').value = r.ratio;
+  $('alert-interval').value = r.interval_min; $('alert-enabled').checked = !!r.enabled;
+  $('alert-err').textContent = '';
+  const {data} = await api('/api/admin/clients'); nodesCache = data || [];
+  let sel = []; try { sel = JSON.parse(r.clients || '[]'); } catch(e) {}
+  alertNodeChecks(sel);
+  $('modal-alert').classList.remove('hidden');
+};
+$('btn-alert-cancel').onclick = closeModals;
+$('btn-alert-save').onclick = async () => {
+  const id = $('alert-id').value;
+  const clients = [...document.querySelectorAll('#alert-nodes input:checked')].map(x => x.value);
+  const body = {
+    name: $('alert-name').value.trim(), metric: $('alert-metric').value,
+    threshold: $('alert-threshold').value, ratio: $('alert-ratio').value,
+    interval_min: $('alert-interval').value, clients,
+    enabled: $('alert-enabled').checked ? '1' : '0',
+  };
+  $('alert-err').textContent = '';
+  const {status, data} = id
+    ? await api('/api/admin/alerts/' + id, 'PUT', body)
+    : await api('/api/admin/alerts', 'POST', body);
+  if (status === 401) return needLogin();
+  if (data && (data.ok || data.id)) { closeModals(); loadAlerts(); }
+  else $('alert-err').textContent = (data && data.error) || '保存失败';
+};
+window.delAlert = async (id, name) => {
+  if (!confirm('确定删除告警规则「' + name + '」吗？')) return;
+  await api('/api/admin/alerts/' + id, 'DELETE');
+  loadAlerts();
 };
 
 /* ---------------- 通知 ---------------- */
-async function loadNotify() {
+document.querySelectorAll('#notify-tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#notify-tabs button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  ['channels','general','offline','traffic'].forEach(t => $('nt-' + t).classList.toggle('hidden', t !== b.dataset.t));
+  ({channels: loadChannels, general: loadNotifyGeneral, offline: loadOfflineNotify, traffic: loadTrafficNotify}[b.dataset.t] || (()=>{}))();
+});
+const CH_TYPE_NAMES = {webhook: 'Webhook', telegram: 'Telegram', bark: 'Bark'};
+let channelsCache = [];
+async function loadChannels() {
+  const {status, data} = await api('/api/admin/notify/channels');
+  if (status === 401) return needLogin();
+  channelsCache = data;
+  $('channels-body').innerHTML = data.length ? data.map((ch, i) => `
+    <tr><td>${esc(ch.name)}</td><td>${CH_TYPE_NAMES[ch.type] || ch.type}</td>
+      <td><span class="badge ${ch.enabled?'on':'off'}">${ch.enabled?'启用':'停用'}</span></td>
+      <td>
+        <button class="ghost small" onclick="testChannel(${i})">测试</button>
+        <button class="ghost small" onclick="openChannelEdit(${i})">编辑</button>
+        <button class="danger small" onclick="delChannel(${i},'${esc(ch.name)}')">删除</button>
+      </td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">暂无渠道，点击右上新增。</td></tr>';
+}
+LOADERS.notify = () => {
+  document.querySelector('#notify-tabs button[data-t="channels"]').click();
+};
+window.testChannel = async i => {
+  const {status, data} = await api('/api/admin/notify/test', 'POST', {index: i});
+  if (status === 401) return needLogin();
+  alert(data && data.ok ? '测试消息已发送，请检查接收端' : ('发送失败：' + ((data && data.error) || status)));
+};
+window.delChannel = async (i, name) => {
+  if (!confirm('确定删除渠道「' + name + '」吗？')) return;
+  await api('/api/admin/notify/channels/' + i, 'DELETE');
+  loadChannels();
+};
+$('channel-type').onchange = () => {
+  const t = $('channel-type').value;
+  $('cfg-webhook').classList.toggle('hidden', t !== 'webhook');
+  $('cfg-telegram').classList.toggle('hidden', t !== 'telegram');
+  $('cfg-bark').classList.toggle('hidden', t !== 'bark');
+};
+$('btn-add-channel').onclick = () => {
+  $('channel-modal-title').textContent = '新增通知渠道';
+  $('channel-idx').value = ''; $('channel-name').value = ''; $('channel-type').value = 'webhook';
+  $('channel-type').onchange();
+  $('cfg-wh-url').value = ''; $('cfg-tg-token').value = ''; $('cfg-tg-chat').value = '';
+  $('cfg-bark-key').value = ''; $('cfg-bark-server').value = '';
+  $('channel-enabled').checked = true; $('channel-err').textContent = '';
+  $('modal-channel').classList.remove('hidden');
+};
+window.openChannelEdit = i => {
+  const ch = channelsCache[i]; if (!ch) return;
+  $('channel-modal-title').textContent = '编辑通知渠道';
+  $('channel-idx').value = i; $('channel-name').value = ch.name || '';
+  $('channel-type').value = ch.type || 'webhook'; $('channel-type').onchange();
+  const cfg = ch.config || {};
+  $('cfg-wh-url').value = cfg.url || ''; $('cfg-tg-token').value = cfg.bot_token || '';
+  $('cfg-tg-chat').value = cfg.chat_id || ''; $('cfg-bark-key').value = cfg.key || '';
+  $('cfg-bark-server').value = cfg.server || '';
+  $('channel-enabled').checked = !!ch.enabled; $('channel-err').textContent = '';
+  $('modal-channel').classList.remove('hidden');
+};
+$('btn-channel-cancel').onclick = closeModals;
+$('btn-channel-save').onclick = async () => {
+  const idx = $('channel-idx').value;
+  const t = $('channel-type').value;
+  const cfg = t === 'webhook' ? {url: $('cfg-wh-url').value.trim()}
+    : t === 'telegram' ? {bot_token: $('cfg-tg-token').value.trim(), chat_id: $('cfg-tg-chat').value.trim()}
+    : {key: $('cfg-bark-key').value.trim(), server: $('cfg-bark-server').value.trim()};
+  const body = {name: $('channel-name').value.trim() || t, type: t, enabled: $('channel-enabled').checked, config: cfg};
+  $('channel-err').textContent = '';
+  const {status, data} = idx === ''
+    ? await api('/api/admin/notify/channels', 'POST', body)
+    : await api('/api/admin/notify/channels/' + idx, 'PUT', body);
+  if (status === 401) return needLogin();
+  if (data && data.ok) { closeModals(); loadChannels(); }
+  else $('channel-err').textContent = (data && data.error) || '保存失败';
+};
+async function loadNotifyGeneral() {
   const {status, data} = await api('/api/admin/settings');
   if (status === 401) return needLogin();
+  $('nt-template').value = data.notify_template || '【{event}】{message}';
+  $('nt-expiry-on').checked = String(data.expiry_remind_enabled) !== '0';
+  $('nt-expiry-days').value = data.expiry_remind_days || 10;
   $('notify-enabled').checked = String(data.notify_enabled) === '1';
   $('notify-webhook').value = data.notify_webhook || '';
 }
+$('btn-save-nt-gen').onclick = async () => {
+  $('nt-gen-ok').textContent = ''; $('nt-gen-err').textContent = '';
+  const {status, data} = await api('/api/admin/settings', 'POST', {
+    notify_template: $('nt-template').value,
+    expiry_remind_enabled: $('nt-expiry-on').checked ? '1' : '0',
+    expiry_remind_days: $('nt-expiry-days').value });
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) $('nt-gen-ok').textContent = '已保存';
+  else $('nt-gen-err').textContent = '保存失败';
+};
 $('btn-save-notify').onclick = async () => {
   $('notify-ok').textContent = ''; $('notify-err').textContent = '';
   const {status, data} = await api('/api/admin/settings', 'POST', {
     notify_enabled: $('notify-enabled').checked ? '1' : '0',
     notify_webhook: $('notify-webhook').value.trim() });
   if (status === 401) return needLogin();
-  if (status === 200 && data.ok) $('notify-ok').textContent = '已保存';
+  if (status === 200 && data.ok) $('notify-ok').textContent = '已保存（将自动迁移为通知渠道）';
   else $('notify-err').textContent = '保存失败';
 };
 $('btn-test-notify').onclick = async () => {
@@ -494,21 +1112,158 @@ $('btn-test-notify').onclick = async () => {
   if (data && data.ok) $('notify-ok').textContent = '测试消息已发送，请检查接收端';
   else $('notify-err').textContent = (data && data.error) || '发送失败';
 };
+async function loadOfflineNotify() {
+  const {status, data} = await api('/api/admin/notify/offline');
+  if (status === 401) return needLogin();
+  $('offline-body').innerHTML = data.length ? data.map(c => `
+    <tr><td>${esc(c.name)} ${c.online ? '' : '<span class="badge off">离线</span>'}</td>
+      <td><input type="checkbox" data-u="${esc(c.uuid)}" class="off-on" ${c.notify_offline ? 'checked' : ''}></td>
+      <td><input type="number" min="0" step="10" style="max-width:120px" data-u="${esc(c.uuid)}" class="off-grace" value="${c.offline_grace}"></td>
+      <td><button class="ghost small" onclick="saveOffline('${esc(c.uuid)}')">保存</button></td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">暂无节点</td></tr>';
+}
+window.saveOffline = async uuid => {
+  const on = document.querySelector(`.off-on[data-u="${uuid}"]`).checked;
+  const grace = document.querySelector(`.off-grace[data-u="${uuid}"]`).value;
+  const {status} = await api('/api/admin/notify/offline/' + uuid, 'PUT',
+    {notify_offline: on ? '1' : '0', offline_grace: grace});
+  if (status === 401) return needLogin();
+  alert('已保存');
+};
+async function loadTrafficNotify() {
+  const {status, data} = await api('/api/admin/notify/traffic');
+  if (status === 401) return needLogin();
+  $('traffic-body').innerHTML = data.length ? data.map(c => {
+    const types = (c.report_types || '').split(',');
+    return `<tr><td>${esc(c.name)}</td>
+      <td><input type="checkbox" data-u="${esc(c.uuid)}" class="tr-on" ${c.report_enabled ? 'checked' : ''}></td>
+      ${['daily','weekly','monthly'].map(t =>
+        `<td><input type="checkbox" data-u="${esc(c.uuid)}" data-t="${t}" class="tr-t" ${types.includes(t)?'checked':''}></td>`).join('')}
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="muted">暂无节点</td></tr>';
+}
+$('btn-save-traffic').onclick = async () => {
+  const body = {};
+  document.querySelectorAll('.tr-on').forEach(el => {
+    const u = el.dataset.u;
+    const types = [...document.querySelectorAll(`.tr-t[data-u="${u}"]:checked`)].map(x => x.dataset.t).join(',');
+    body[u] = {report_enabled: el.checked ? '1' : '0', report_types: types};
+  });
+  const {status} = await api('/api/admin/notify/traffic', 'PUT', body);
+  if (status === 401) return needLogin();
+  $('traffic-ok').textContent = '已保存';
+};
+
+/* ---------------- 远程执行 ---------------- */
+async function loadExec() {
+  const {status, data} = await api('/api/admin/clients');
+  if (status === 401) return needLogin();
+  $('exec-nodes').innerHTML = data.length
+    ? data.map(c => `<label><input type="checkbox" value="${esc(c.uuid)}"> ${esc(c.name || c.uuid.slice(0,8))} ${c.online?'':'<span class="muted">(离线)</span>'}</label>`).join('')
+    : '<span class="muted">暂无节点</span>';
+  loadExecHistory();
+}
+LOADERS.exec = loadExec;
+$('btn-exec-run').onclick = async () => {
+  const uuids = [...document.querySelectorAll('#exec-nodes input:checked')].map(x => x.value);
+  const command = $('exec-cmd').value.trim();
+  $('exec-err').textContent = '';
+  if (!uuids.length) { $('exec-err').textContent = '请选择至少一个节点'; return; }
+  if (!command) { $('exec-err').textContent = '请输入命令'; return; }
+  if (!confirm(`确定在 ${uuids.length} 个节点上执行吗？\n\n${command.slice(0, 200)}`)) return;
+  const {status, data} = await api('/api/admin/exec', 'POST', {client_uuids: uuids, command});
+  if (status === 401) return needLogin();
+  if (data && data.ok) { $('exec-cmd').value = ''; loadExecHistory(); }
+  else $('exec-err').textContent = (data && data.error) || '下发失败';
+};
+$('btn-exec-refresh').onclick = loadExecHistory;
+async function loadExecHistory() {
+  const {status, data} = await api('/api/admin/exec/tasks?limit=50');
+  if (status === 401) return needLogin();
+  const badge = s => s === 'done' ? '<span class="badge on">完成</span>'
+    : s === 'running' ? '<span class="badge warn">执行中</span>' : '<span class="badge info">待领取</span>';
+  $('exec-body').innerHTML = data.length ? data.map(t => `
+    <tr><td style="white-space:nowrap">${fmtDate(t.created_at)}</td>
+      <td>${esc(t.client_name)}</td>
+      <td class="token">${esc(t.command.slice(0, 60))}${t.command.length > 60 ? '…' : ''}</td>
+      <td>${badge(t.status)}</td>
+      <td>${t.output ? `<details class="out"><summary>查看输出</summary><pre>${esc(t.output)}</pre></details>` : '<span class="muted">-</span>'}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="5" class="muted">暂无执行记录</td></tr>';
+}
+
+/* ---------------- 事件日志 ---------------- */
+let evPage = 1;
+async function loadEvents() {
+  const {status, data} = await api(`/api/admin/events?page=${evPage}&per_page=50`);
+  if (status === 401) return needLogin();
+  const lvl = l => l === 'warn' ? '<span class="badge warn">警告</span>'
+    : l === 'error' ? '<span class="badge off">错误</span>' : '<span class="badge on">信息</span>';
+  $('events-body').innerHTML = data.events.length ? data.events.map(e => `
+    <tr><td style="white-space:nowrap">${fmtDate(e.created_at)}</td><td>${lvl(e.level)}</td>
+      <td>${esc(e.type)}</td><td>${esc(e.message)}</td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">暂无事件</td></tr>';
+  $('events-page').textContent = `第 ${evPage} 页 / 共 ${data.total} 条`;
+}
+LOADERS.events = () => { evPage = 1; loadEvents(); };
+$('btn-events-prev').onclick = () => { if (evPage > 1) { evPage--; loadEvents(); } };
+$('btn-events-next').onclick = () => { evPage++; loadEvents(); };
+$('btn-events-clear').onclick = async () => {
+  if (!confirm('确定清空全部事件日志吗？')) return;
+  await api('/api/admin/events', 'DELETE');
+  evPage = 1; loadEvents();
+};
+
+/* ---------------- 数据库 ---------------- */
+async function loadDatabase() {
+  const {status, data} = await api('/api/admin/db/info');
+  if (status === 401) return needLogin();
+  $('db-info').innerHTML = [
+    ['数据库大小', fmtSize(data.db_size)],
+    ['监控记录数', data.records],
+    ['事件数', data.events],
+    ['延迟探测结果数', data.ping_results],
+    ['登录会话数', data.sessions],
+  ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(String(v))}</span></div>`).join('');
+  $('db-keep-hours').value = data.record_keep_hours || 24;
+  $('db-ok').textContent = ''; $('vacuum-ok').textContent = '';
+}
+LOADERS.database = loadDatabase;
+$('btn-db-save').onclick = async () => {
+  const {status, data} = await api('/api/admin/settings', 'POST', {record_keep_hours: $('db-keep-hours').value});
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) $('db-ok').textContent = '已保存';
+};
+$('btn-vacuum').onclick = async () => {
+  if (!confirm('确定压缩数据库吗？执行期间会短暂锁定。')) return;
+  $('vacuum-ok').textContent = '压缩中…';
+  const {status, data} = await api('/api/admin/db/vacuum', 'POST');
+  if (status === 401) return needLogin();
+  if (data && data.ok) {
+    $('vacuum-ok').textContent = `完成：${fmtSize(data.before)} → ${fmtSize(data.after)}，回收 ${fmtSize(data.reclaimed)}`;
+    loadDatabase();
+  } else $('vacuum-ok').textContent = '压缩失败';
+};
 
 /* ---------------- 会话 ---------------- */
 async function loadSessions() {
   const {status, data} = await api('/api/admin/sessions');
   if (status === 401) return needLogin();
-  $('sess-info').innerHTML =
-    `<div class="kv"><span>当前会话 IP</span><span>${esc(data.current.ip || '-')}</span></div>
-     <div class="kv"><span>User-Agent</span><span>${esc(data.current.user_agent || '-')}</span></div>
-     <div class="kv"><span>状态</span><span>已登录</span></div>`;
+  $('sess-info').innerHTML = data.sessions.length
+    ? '<table><thead><tr><th></th><th>IP</th><th>User-Agent</th><th>创建时间</th><th>最后活跃</th><th>过期时间</th></tr></thead><tbody>' +
+      data.sessions.map(s => `<tr><td>${s.current ? '<span class="badge info">本机</span>' : ''}</td>
+        <td>${esc(s.ip)}</td><td style="font-size:12px">${esc(s.user_agent)}</td>
+        <td>${fmtDate(s.created_at)}</td><td>${fmtTime(s.last_seen)}</td><td>${fmtDate(s.expires_at)}</td></tr>`).join('') +
+      '</tbody></table>'
+    : '<p class="muted">暂无会话</p>';
 }
+LOADERS.sessions = loadSessions;
 $('btn-revoke-sess').onclick = async () => {
-  if (!confirm('确定退出所有会话吗？所有设备需重新登录。')) return;
+  if (!confirm('确定退出所有会话吗？所有设备（含本机）需重新登录。')) return;
   const {status} = await api('/api/admin/sessions/revoke_all', 'POST');
-  if (status === 401) return needLogin();
-  alert('已使所有会话失效');
+  if (status === 401) { needLogin(); return; }
+  alert('已使所有会话失效，请重新登录');
+  needLogin();
 };
 
 /* ---------------- 账户 ---------------- */
@@ -518,7 +1273,42 @@ async function loadAccount() {
   $('acc-current').textContent = data.username || 'admin';
   ['acc-user','acc-pass1','acc-pass2','acc-cur'].forEach(id => $(id).value = '');
   $('acc-ok').textContent = ''; $('acc-err').textContent = '';
+  const t = await api('/api/admin/2fa');
+  const box = $('tfa-box');
+  if (t.status !== 200) { box.innerHTML = '<p class="muted">加载失败</p>'; return; }
+  if (t.data.enabled) {
+    box.innerHTML = `<p><span class="badge on">已启用</span></p>
+      <label>当前密码（关闭 2FA 时必填）</label><input id="tfa-cur-pass" type="password" autocomplete="current-password">
+      <div class="err" id="tfa-err"></div>
+      <button class="danger" id="btn-tfa-disable" style="margin-top:12px">关闭双重认证</button>`;
+    $('btn-tfa-disable').onclick = async () => {
+      $('tfa-err').textContent = '';
+      const {status: s2, data: d2} = await api('/api/admin/2fa/disable', 'POST', {password: $('tfa-cur-pass').value});
+      if (s2 === 401) { const m = (d2 && d2.error) || ''; if (m) { $('tfa-err').textContent = m; return; } return needLogin(); }
+      if (d2 && d2.ok) loadAccount();
+    };
+  } else {
+    box.innerHTML = `<p class="muted">尚未启用。</p><button id="btn-tfa-setup">生成密钥并启用</button><div id="tfa-setup-box"></div>`;
+    $('btn-tfa-setup').onclick = async () => {
+      const {status: s2, data: d2} = await api('/api/admin/2fa/setup', 'POST');
+      if (s2 === 401) return needLogin();
+      $('tfa-setup-box').innerHTML = `
+        <p class="muted">用验证器 App 扫描下方 URI（或手动输入密钥），然后输入 6 位验证码完成启用：</p>
+        <code class="cmd">${esc(d2.uri)}</code>
+        <label>密钥（手动输入用）</label><input type="text" value="${esc(d2.secret)}" readonly onclick="this.select()">
+        <label>验证码</label><input id="tfa-code" type="text" inputmode="numeric" maxlength="6" placeholder="000000">
+        <div class="err" id="tfa-err"></div>
+        <button id="btn-tfa-enable" style="margin-top:8px">验证并启用</button>`;
+      $('btn-tfa-enable').onclick = async () => {
+        $('tfa-err').textContent = '';
+        const {data: d3} = await api('/api/admin/2fa/enable', 'POST', {code: $('tfa-code').value.trim()});
+        if (d3 && d3.ok) { alert('双重认证已启用'); loadAccount(); }
+        else $('tfa-err').textContent = '验证码错误';
+      };
+    };
+  }
 }
+LOADERS.account = loadAccount;
 $('btn-save-acc').onclick = async () => {
   $('acc-ok').textContent = ''; $('acc-err').textContent = '';
   const p1 = $('acc-pass1').value, p2 = $('acc-pass2').value;
@@ -536,13 +1326,33 @@ $('btn-save-acc').onclick = async () => {
   else $('acc-err').textContent = (data && data.error) || '保存失败';
 };
 
-/* ---------------- 日志 ---------------- */
+/* ---------------- 设置 ---------------- */
+async function loadSettings() {
+  const {status, data} = await api('/api/admin/settings');
+  if (status === 401) return needLogin();
+  $('set-sitename').value = data.sitename || '';
+  $('set-desc').value = data.description || '';
+  $('set-offline-th').value = data.offline_threshold || 180;
+}
+LOADERS.settings = loadSettings;
+$('btn-save-settings').onclick = async () => {
+  $('settings-ok').textContent = ''; $('settings-err').textContent = '';
+  const {status, data} = await api('/api/admin/settings', 'POST', {
+    sitename: $('set-sitename').value, description: $('set-desc').value,
+    offline_threshold: $('set-offline-th').value });
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) $('settings-ok').textContent = '已保存';
+  else $('settings-err').textContent = '保存失败';
+};
+
+/* ---------------- 系统日志 ---------------- */
 async function loadLogs() {
   const {status, data} = await api('/api/admin/logs?lines=' + $('log-lines').value);
   if (status === 401) return needLogin();
   $('log-src').textContent = data.source ? ('来源：' + data.source) : '';
   $('log-body').textContent = data.logs || (data.hint || '暂无日志');
 }
+LOADERS.logs = loadLogs;
 $('btn-refresh-logs').onclick = loadLogs;
 
 /* ---------------- 关于 ---------------- */
@@ -557,6 +1367,7 @@ async function loadAbout() {
     ['监控记录数', data.records], ['启动时间', data.started_at], ['运行时长', upStr],
   ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(String(v))}</span></div>`).join('');
 }
+LOADERS.about = loadAbout;
 </script>
 </body>
 </html>

@@ -28,7 +28,10 @@ JSON-RPC methods implemented:
 import functools
 import json
 import os
+import re
 import secrets
+import socket
+import base64
 import subprocess
 import threading
 import time
@@ -100,7 +103,37 @@ RECORD_METRIC_MAP = {
 }
 
 
-def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
+# ------------------------------------------------------------ TOTP (2FA, stdlib only)
+def _new_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode()
+
+
+def _totp_verify(secret_b32: str, code, window: int = 1) -> bool:
+    """Verify a 6-digit TOTP code (RFC 6238, SHA1, 30s step)."""
+    import hmac
+    import hashlib
+    import struct
+
+    try:
+        key = base64.b32decode(secret_b32.strip().upper())
+    except Exception:
+        return False
+    want = str(code).strip()
+    if not want.isdigit():
+        return False
+    t = int(time.time()) // 30
+    for dt in range(-window, window + 1):
+        msg = struct.pack(">Q", t + dt)
+        h = hmac.new(key, msg, hashlib.sha1).digest()
+        o = h[-1] & 0x0F
+        c = struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF
+        if str(c % 10 ** 6).zfill(6) == want:
+            return True
+    return False
+
+
+def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
+               enable_monitor: bool = True):
     app = Flask(__name__, static_folder=None)
     app.secret_key = secrets.token_hex(32)
     CORS(app)
@@ -164,6 +197,336 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
 
     def _iso(dt: datetime) -> str:
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    # ============================================================ v3 core
+    # 后台监控主循环：离线检测 / 负载告警 / 延迟监测 / 到期提醒 / 流量报告。
+    # 取代 v2 只在 agent 上报时搭便车检测的方式（单节点全离线时无上报触发）。
+    SESSION_TTL = 30 * 86400
+
+    def _online_threshold() -> int:
+        try:
+            return max(30, min(3600, int(store.get_setting("offline_threshold", "180") or 180)))
+        except Exception:
+            return 180
+
+    def _node_online(c: dict, now: datetime) -> bool:
+        grace = c.get("offline_grace") or 0
+        threshold = grace if grace else _online_threshold()
+        t = _parse_time(c.get("last_report_at"))
+        if not t:
+            return False
+        return (now - t).total_seconds() < threshold
+
+    # ---------------- 通知渠道 ----------------
+    def _get_channels() -> list:
+        try:
+            ch = json.loads(store.get_setting("notify_channels", "[]") or "[]")
+        except Exception:
+            ch = []
+        # 兼容 v2 的单 webhook 配置：自动迁移为一个渠道
+        legacy_url = (store.get_setting("notify_webhook", "") or "").strip()
+        if legacy_url and not any(
+            x.get("type") == "webhook" and x.get("config", {}).get("url") == legacy_url
+            for x in ch
+        ):
+            ch.append({
+                "name": "默认 Webhook",
+                "type": "webhook",
+                "enabled": (store.get_setting("notify_enabled", "0") or "0") == "1",
+                "config": {"url": legacy_url},
+            })
+            store.set_setting("notify_channels", json.dumps(ch))
+        return ch
+
+    def _save_channels(ch: list):
+        store.set_setting("notify_channels", json.dumps(ch))
+
+    def _render_msg(event: str, message: str) -> str:
+        tpl = store.get_setting("notify_template", "【{event}】{message}")
+        return tpl.replace("{event}", str(event)).replace("{message}", str(message))
+
+    def _send_channel(ch: dict, text: str) -> bool:
+        """经单个渠道发送，返回是否成功。"""
+        try:
+            typ = ch.get("type")
+            cfg = ch.get("config", {}) or {}
+            if typ == "webhook":
+                url = (cfg.get("url") or "").strip()
+                if not url:
+                    return False
+                req = urllib.request.Request(
+                    url, data=json.dumps({"text": text}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return 200 <= resp.status < 300
+            if typ == "telegram":
+                token = (cfg.get("bot_token") or "").strip()
+                chat_id = str(cfg.get("chat_id") or "").strip()
+                if not token or not chat_id:
+                    return False
+                api = (cfg.get("api_base") or "https://api.telegram.org/bot").rstrip("/")
+                url = f"{api}{token}/sendMessage"
+                body = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
+                req = urllib.request.Request(
+                    url, data=body, headers={"Content-Type": "application/json"},
+                    method="POST")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return 200 <= resp.status < 300
+            if typ == "bark":
+                key = (cfg.get("key") or "").strip()
+                if not key:
+                    return False
+                server = (cfg.get("server") or "https://api.day.app").rstrip("/")
+                url = f"{server}/{key}"
+                body = json.dumps({"title": "bigcat", "body": text}).encode("utf-8")
+                req = urllib.request.Request(
+                    url, data=body, headers={"Content-Type": "application/json"},
+                    method="POST")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return 200 <= resp.status < 300
+            return False
+        except Exception:
+            return False
+
+    def _notify(event: str, message: str):
+        """经所有启用的渠道发送通知，并写入事件日志。"""
+        text = _render_msg(event, message)
+        for ch in _get_channels():
+            if ch.get("enabled"):
+                threading.Thread(target=_send_channel, args=(ch, text), daemon=True).start()
+        try:
+            store.log_event("info", "notify", f"[{event}] {message}")
+        except Exception:
+            pass
+
+    # ---------------- 离线检测 ----------------
+    def _offline_check():
+        now = datetime.now(timezone.utc)
+        try:
+            prev = json.loads(store.get_setting("notify_state", "{}") or "{}")
+        except Exception:
+            prev = {}
+        cur, changed = {}, False
+        for c in store.list_clients():
+            online = _node_online(c, now)
+            cur[c["uuid"]] = online
+            if c["uuid"] in prev and prev[c["uuid"]] != online:
+                name = c.get("name") or c["uuid"][:8]
+                if online:
+                    _notify("上线", f"节点「{name}」恢复在线")
+                    store.log_event("info", "node", f"节点「{name}」恢复在线")
+                elif c.get("notify_offline", 1):
+                    grace = c.get("offline_grace") or _online_threshold()
+                    _notify("离线", f"节点「{name}」离线（超过 {grace} 秒未上报）")
+                    store.log_event("warn", "node", f"节点「{name}」离线")
+            if prev.get(c["uuid"]) != online:
+                changed = True
+        if changed:
+            store.set_setting("notify_state", json.dumps(cur))
+
+    # ---------------- 负载告警 ----------------
+    def _rule_metric_value(metric: str, r: dict) -> float:
+        try:
+            if metric == "cpu":
+                return float(r.get("cpu", 0))
+            if metric == "ram":
+                return float(r.get("ram", 0)) * 100.0 / float(r.get("ram_total") or 1)
+            if metric == "disk":
+                return float(r.get("disk", 0)) * 100.0 / float(r.get("disk_total") or 1)
+        except Exception:
+            pass
+        return 0.0
+
+    def _alerts_tick():
+        now = datetime.now(timezone.utc)
+        for rule in store.list_alert_rules():
+            if not rule.get("enabled"):
+                continue
+            try:
+                last_fired = _parse_time(rule.get("last_fired_at"))
+                if last_fired and (now - last_fired).total_seconds() < int(rule.get("interval_min", 2)) * 60:
+                    continue
+            except Exception:
+                pass
+            try:
+                targets = json.loads(rule.get("clients") or "[]") or []
+            except Exception:
+                targets = []
+            if not targets:
+                targets = [c["uuid"] for c in store.list_clients()]
+            window_start = _iso(now - timedelta(minutes=int(rule.get("interval_min", 2))))
+            window_end = _iso(now)
+            for uuid in targets:
+                rows = store.query_records(uuid, window_start, window_end, limit=10000)
+                if not rows:
+                    continue
+                vals = [_rule_metric_value(rule.get("metric", "cpu"), r) for r in rows]
+                ratio = sum(1 for v in vals if v > float(rule.get("threshold", 90))) / len(vals)
+                if ratio >= float(rule.get("ratio", 0.8)):
+                    c = store.get_client(uuid) or {}
+                    name = c.get("name") or uuid[:8]
+                    _notify("负载告警",
+                            f"{rule.get('name')}：节点「{name}」"
+                            f"{rule.get('metric')} {ratio * 100:.0f}% 的时间超过 {rule.get('threshold')}%")
+                    store.log_event("warn", "alert",
+                                    f"负载告警「{rule.get('name')}」触发：{name}")
+                    store.set_rule_fired(rule["id"])
+                    break
+
+    # ---------------- 延迟监测 ----------------
+    def _do_ping(task: dict):
+        target = (task.get("target") or "").strip()
+        typ = (task.get("type") or "tcp").lower()
+        t0 = time.time()
+        try:
+            if typ == "tcp":
+                host, _, port = target.partition(":")
+                port = int(port.strip() or 80)
+                s = socket.create_connection((host.strip(), port), timeout=5)
+                s.close()
+            elif typ == "http":
+                url = target if target.startswith("http") else "http://" + target
+                req = urllib.request.Request(url, headers={"User-Agent": "bigcat-ping/1.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    resp.read(1024)
+            elif typ == "icmp":
+                host = target.split(":")[0].split("/")[0].strip()
+                out = subprocess.run(["ping", "-c1", "-W2", host],
+                                     capture_output=True, text=True, timeout=12)
+                m = re.search(r"time[=<]([\d.]+)\s*ms", out.stdout)
+                if not m:
+                    return 0.0, False
+                return float(m.group(1)), True
+            else:
+                return 0.0, False
+            return (time.time() - t0) * 1000.0, True
+        except Exception:
+            return 0.0, False
+
+    def _ping_tick(next_run: dict):
+        now = time.time()
+        for task in store.list_ping_tasks():
+            if not task.get("enabled"):
+                continue
+            if now < next_run.get(task["id"], 0):
+                continue
+            latency, ok = _do_ping(task)
+            store.insert_ping_result(task["id"], round(latency, 2), ok)
+            next_run[task["id"]] = now + max(30, int(task.get("interval_sec") or 300))
+        try:
+            store.prune_ping_results(72)
+        except Exception:
+            pass
+
+    # ---------------- 到期提醒 / 流量报告 ----------------
+    def _fmt_bytes(n) -> str:
+        n = float(n or 0)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if n < 1024 or unit == "TB":
+                return f"{n:.2f} {unit}"
+            n /= 1024
+        return f"{n:.2f} TB"
+
+    def _expiry_check():
+        if (store.get_setting("expiry_remind_enabled", "1") or "1") != "1":
+            return
+        try:
+            days = int(store.get_setting("expiry_remind_days", "10") or 10)
+        except Exception:
+            days = 10
+        today = datetime.now(timezone.utc).date()
+        for c in store.list_clients():
+            exp_s = (c.get("expired_at") or "").strip()
+            if not exp_s:
+                continue
+            try:
+                exp = datetime.fromisoformat(exp_s).date()
+            except Exception:
+                continue
+            delta = (exp - today).days
+            if 0 <= delta <= days:
+                name = c.get("name") or c["uuid"][:8]
+                _notify("到期提醒", f"节点「{name}」还有 {delta} 天到期（{exp.isoformat()}）")
+                store.log_event("warn", "expiry", f"节点「{name}」{delta} 天后到期")
+
+    def _traffic_reports_tick():
+        today = datetime.now(timezone.utc).date()
+        due = {}
+        if store.get_setting("last_report_daily") != today.isoformat():
+            due["daily"] = (today - timedelta(days=1), today, "日报")
+        if today.weekday() == 0 and store.get_setting("last_report_weekly") != today.isoformat():
+            due["weekly"] = (today - timedelta(days=7), today, "周报")
+        if today.day == 1 and store.get_setting("last_report_monthly") != today.isoformat():
+            due["monthly"] = (today - timedelta(days=30), today, "月报")
+        if not due:
+            return
+        now_iso = _iso(datetime.now(timezone.utc))
+        for c in store.list_clients():
+            if not c.get("report_enabled"):
+                continue
+            types = [t.strip() for t in (c.get("report_types") or "").split(",") if t.strip()]
+            name = c.get("name") or c["uuid"][:8]
+            for key, (start_d, end_d, label) in due.items():
+                if key not in types:
+                    continue
+                s = _iso(datetime(start_d.year, start_d.month, start_d.day, tzinfo=timezone.utc))
+                t = store.sum_traffic(c["uuid"], s, now_iso)
+                _notify("流量报告",
+                        f"节点「{name}」{label}：上行 {_fmt_bytes(t['up'])} / "
+                        f"下行 {_fmt_bytes(t['down'])}")
+        for key in due:
+            store.set_setting(f"last_report_{key}", today.isoformat())
+
+    def _daily_tick():
+        today = datetime.now(timezone.utc).date().isoformat()
+        if store.get_setting("last_daily") == today:
+            return
+        store.set_setting("last_daily", today)
+        try:
+            _expiry_check()
+        except Exception:
+            pass
+        try:
+            _traffic_reports_tick()
+        except Exception:
+            pass
+
+    def _monitor_tick(next_run: dict):
+        try:
+            store.prune_expired_sessions()
+        except Exception:
+            pass
+        try:
+            _offline_check()
+        except Exception:
+            pass
+        try:
+            _alerts_tick()
+        except Exception:
+            pass
+        try:
+            _ping_tick(next_run)
+        except Exception:
+            pass
+        try:
+            _daily_tick()
+        except Exception:
+            pass
+
+    def _monitor_loop():
+        next_run = {}
+        while True:
+            try:
+                _monitor_tick(next_run)
+            except Exception as e:  # noqa: BLE001
+                print(f"[bigcat-monitor] tick failed: {e}")
+            time.sleep(30)
+
+    # expose for tests
+    app.config["monitor_tick"] = _monitor_tick
+    app.config["do_ping"] = _do_ping
+    app.config["notify"] = _notify
+    # ============ v3 core end ============
 
     def _query_series(metric_key, entity_ids, start, end, max_points):
         """Build queryMetrics-style series from the records table."""
@@ -574,6 +937,27 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             store.update_client(client["uuid"], totals)
         return jsonify({"ok": True})
 
+    @app.route("/api/agent/tasks", methods=["GET"])
+    def agent_tasks():
+        client = _agent_auth()
+        if not client:
+            return jsonify({"error": "unauthorized"}), 401
+        tasks = store.claim_exec_tasks(client["uuid"])
+        return jsonify({"tasks": tasks})
+
+    @app.route("/api/agent/task_result", methods=["POST"])
+    def agent_task_result():
+        client = _agent_auth()
+        if not client:
+            return jsonify({"error": "unauthorized"}), 401
+        data = request.get_json(force=True, silent=True) or {}
+        task_id = data.get("task_id")
+        if task_id is None:
+            return jsonify({"error": "task_id required"}), 400
+        store.finish_exec_task(int(task_id), str(data.get("output", ""))[:100000],
+                               bool(data.get("ok", True)))
+        return jsonify({"ok": True})
+
     # ------------------------------------------------------------ admin helpers
     def _session_version() -> int:
         try:
@@ -581,19 +965,11 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
         except Exception:
             return 0
 
-    def _online_threshold() -> int:
-        try:
-            return max(30, min(3600, int(store.get_setting("offline_threshold", "180") or 180)))
-        except Exception:
-            return 180
-
     def _is_online(c: dict) -> bool:
-        t = _parse_time(c.get("last_report_at"))
-        if not t:
-            return False
-        return (datetime.now(timezone.utc) - t).total_seconds() < _online_threshold()
+        return _node_online(c, datetime.now(timezone.utc))
 
     def _post_webhook(url: str, text: str, timeout: int = 8) -> bool:
+        # 保留给旧版测试接口兼容；新逻辑走渠道 _send_channel
         try:
             req = urllib.request.Request(
                 url,
@@ -606,32 +982,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
         except Exception:
             return False
 
-    def _notify(text: str):
-        url = (store.get_setting("notify_webhook", "") or "").strip()
-        if not url:
-            return
-        threading.Thread(target=_post_webhook, args=(url, text), daemon=True).start()
-
     def _check_node_transitions():
-        """Detect online/offline transitions on each agent report; notify on change."""
-        if (store.get_setting("notify_enabled", "0") or "0") != "1":
-            return
-        try:
-            prev = json.loads(store.get_setting("notify_state", "{}") or "{}")
-        except Exception:
-            prev = {}
-        cur, changed = {}, False
-        for c in store.list_clients():
-            online = _is_online(c)
-            cur[c["uuid"]] = "online" if online else "offline"
-            if c["uuid"] in prev and prev[c["uuid"]] != cur[c["uuid"]]:
-                name = c.get("name") or c["uuid"][:8]
-                _notify(f"🟢 bigcat：节点「{name}」恢复在线" if online
-                        else f"🔴 bigcat：节点「{name}」离线（超过 {_online_threshold()} 秒未上报）")
-            if prev.get(c["uuid"]) != cur[c["uuid"]]:
-                changed = True
-        if changed:
-            store.set_setting("notify_state", json.dumps(cur))
+        # v2 兼容入口：agent 上报时顺带触发一次；权威检测由监控线程每 30s 执行
+        _offline_check()
 
     def _maybe_prune():
         """Prune old records at most once per hour (no scheduler in Flask dev server)."""
@@ -652,11 +1005,33 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             pass
 
     # ------------------------------------------------------------ admin API
+    # ------------------------------------------------------------ admin auth (v3)
+    def _create_admin_session():
+        sid = secrets.token_hex(16)
+        store.create_session(sid, request.remote_addr or "",
+                             request.headers.get("User-Agent", ""))
+        session["sid"] = sid
+        session["v"] = _session_version()
+        store.log_event("info", "auth",
+                        f"管理员登录成功（IP {request.remote_addr or '-'}）")
+        return sid
+
     def _require_admin(fn):
         @functools.wraps(fn)
         def wrapper(*a, **kw):
-            if not session.get("admin") or session.get("v") != _session_version():
+            sid = session.get("sid")
+            s = store.get_session(sid) if sid else None
+            if not s or session.get("v") != _session_version():
                 return jsonify({"error": "login required"}), 401
+            exp = _parse_time(s.get("expires_at"))
+            if not exp or exp < datetime.now(timezone.utc):
+                return jsonify({"error": "login required"}), 401
+            try:
+                last = _parse_time(s.get("last_seen"))
+                if not last or (datetime.now(timezone.utc) - last).total_seconds() > 120:
+                    store.touch_session(sid)
+            except Exception:
+                pass
             return fn(*a, **kw)
         return wrapper
 
@@ -671,38 +1046,79 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
         if not password:
             return jsonify({"error": "password required"}), 400
         store.set_admin(username, password)
-        session["admin"] = True
-        session["v"] = _session_version()
+        _create_admin_session()
         return jsonify({"ok": True, "username": username})
 
     @app.route("/api/admin/login", methods=["POST"])
     def admin_login():
         data = request.get_json(force=True, silent=True) or {}
-        if store.verify_admin(data.get("password", ""), data.get("username", "")):
-            session["admin"] = True
-            session["v"] = _session_version()
+        if not store.verify_admin(data.get("password", ""), data.get("username", "")):
+            store.log_event("warn", "auth",
+                            f"管理员登录失败（IP {request.remote_addr or '-'}）")
+            return jsonify({"error": "invalid username or password"}), 401
+        if (store.get_setting("totp_enabled", "0") or "0") == "1":
+            session["pre2fa"] = True
+            return jsonify({"ok": False, "need_2fa": True})
+        _create_admin_session()
+        return jsonify({"ok": True, "username": store.get_admin_username()})
+
+    @app.route("/api/admin/login/2fa", methods=["POST"])
+    def admin_login_2fa():
+        if not session.get("pre2fa"):
+            return jsonify({"error": "login required"}), 401
+        data = request.get_json(force=True, silent=True) or {}
+        if _totp_verify(store.get_setting("totp_secret", ""), data.get("code", "")):
+            session.pop("pre2fa", None)
+            _create_admin_session()
             return jsonify({"ok": True, "username": store.get_admin_username()})
-        return jsonify({"error": "invalid username or password"}), 401
+        return jsonify({"error": "验证码错误"}), 401
 
     @app.route("/api/admin/logout", methods=["POST"])
     def admin_logout():
-        session.pop("admin", None)
+        sid = session.pop("sid", None)
+        if sid:
+            try:
+                store._conn.execute("DELETE FROM sessions WHERE id = ?", (sid,))
+                store._conn.commit()
+            except Exception:
+                pass
+        session.pop("pre2fa", None)
         return jsonify({"ok": True})
 
     @app.route("/api/admin/status")
     def admin_status():
-        logged = bool(session.get("admin")) and session.get("v") == _session_version()
+        sid = session.get("sid")
+        s = store.get_session(sid) if sid else None
+        logged = bool(s) and session.get("v") == _session_version()
+        if logged:
+            exp = _parse_time(s.get("expires_at"))
+            logged = bool(exp and exp > datetime.now(timezone.utc))
         return jsonify({
             "has_admin": store.has_admin(),
             "logged_in": logged,
             "username": store.get_admin_username() if logged else "",
             "nodes": len(store.list_clients()),
+            "need_2fa": bool(session.get("pre2fa")),
         })
 
     @app.route("/api/admin/clients")
     @_require_admin
     def admin_clients():
-        return jsonify(store.list_clients())
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        out = []
+        for c in store.list_clients():
+            d = dict(c)
+            d["online"] = _is_online(c)
+            d["days_to_expiry"] = None
+            exp_s = (c.get("expired_at") or "").strip()
+            if exp_s:
+                try:
+                    d["days_to_expiry"] = (datetime.fromisoformat(exp_s).date() - today).days
+                except Exception:
+                    pass
+            out.append(d)
+        return jsonify(out)
 
     @app.route("/api/admin/client/add", methods=["POST"])
     @_require_admin
@@ -733,6 +1149,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
                 "record_keep_hours": store.get_setting("record_keep_hours", "24"),
                 "notify_enabled": store.get_setting("notify_enabled", "0"),
                 "notify_webhook": store.get_setting("notify_webhook", ""),
+                "notify_template": store.get_setting("notify_template", "【{event}】{message}"),
+                "expiry_remind_enabled": store.get_setting("expiry_remind_enabled", "1"),
+                "expiry_remind_days": store.get_setting("expiry_remind_days", "10"),
             })
             return jsonify(out)
         data = request.get_json(force=True, silent=True) or {}
@@ -756,7 +1175,35 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             store.set_setting("notify_enabled", "1" if str(data["notify_enabled"]) == "1" else "0")
         if "notify_webhook" in data:
             store.set_setting("notify_webhook", str(data["notify_webhook"]).strip()[:500])
+        if "notify_template" in data:
+            store.set_setting("notify_template", str(data["notify_template"])[:300])
+        if "expiry_remind_enabled" in data:
+            store.set_setting("expiry_remind_enabled",
+                              "1" if str(data["expiry_remind_enabled"]) == "1" else "0")
+        if "expiry_remind_days" in data:
+            try:
+                v = max(1, min(365, int(data["expiry_remind_days"])))
+            except Exception:
+                v = 10
+            store.set_setting("expiry_remind_days", str(v))
         return jsonify({"ok": True})
+
+    def _expiry_soon_list(within_days: int = 30):
+        today = datetime.now(timezone.utc).date()
+        out = []
+        for c in store.list_clients():
+            exp_s = (c.get("expired_at") or "").strip()
+            if not exp_s:
+                continue
+            try:
+                exp = datetime.fromisoformat(exp_s).date()
+            except Exception:
+                continue
+            delta = (exp - today).days
+            if 0 <= delta <= within_days:
+                out.append({"uuid": c["uuid"], "name": c.get("name") or c["uuid"][:8],
+                            "expired_at": exp_s, "days": delta})
+        return sorted(out, key=lambda x: x["days"])
 
     @app.route("/api/admin/dashboard")
     @_require_admin
@@ -778,6 +1225,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
                  "last_report_at": c.get("last_report_at")}
                 for c in sorted(offline, key=lambda c: c.get("last_report_at") or "")[:10]
             ],
+            "expiry_soon": _expiry_soon_list(),
             "nodes": [
                 {"uuid": c["uuid"], "name": c.get("name") or c["uuid"][:8],
                  "online": _is_online(c), "last_report_at": c.get("last_report_at")}
@@ -789,6 +1237,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
     @_require_admin
     def admin_notify_test():
         data = request.get_json(force=True, silent=True) or {}
+        # 渠道下标优先；否则兼容旧的 webhook 直发
+        if "index" in data:
+            try:
+                ch = _get_channels()[int(data["index"])]
+            except Exception:
+                return jsonify({"error": "渠道不存在"}), 404
+            ok = _send_channel(ch, _render_msg("测试", "bigcat 通知测试：渠道工作正常"))
+            return jsonify({"ok": ok} if ok else {"error": "发送失败，请检查渠道配置"}), 200 if ok else 502
         url = (data.get("webhook") or store.get_setting("notify_webhook", "") or "").strip()
         if not url:
             return jsonify({"error": "webhook url required"}), 400
@@ -815,17 +1271,28 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
     @app.route("/api/admin/sessions")
     @_require_admin
     def admin_sessions():
-        return jsonify({
-            "current": {"ip": request.remote_addr, "user_agent": request.headers.get("User-Agent", "")[:120]},
-            "version": _session_version(),
-        })
+        my_sid = session.get("sid")
+        out = []
+        for s in store.list_sessions():
+            out.append({
+                "id": s["id"][:8] + "…",
+                "ip": s.get("ip") or "",
+                "user_agent": (s.get("user_agent") or "")[:120],
+                "created_at": s.get("created_at"),
+                "last_seen": s.get("last_seen"),
+                "expires_at": s.get("expires_at"),
+                "current": s["id"] == my_sid,
+            })
+        return jsonify({"sessions": out})
 
     @app.route("/api/admin/sessions/revoke_all", methods=["POST"])
     @_require_admin
     def admin_sessions_revoke_all():
-        store.set_setting("session_version", str(_session_version() + 1))
-        session["v"] = _session_version()
-        return jsonify({"ok": True})
+        # 真正删除全部登录会话（含当前）：后续请求全部 401，当前用户需重新登录
+        n = store.delete_all_sessions()
+        store.log_event("warn", "auth", f"删除全部登录会话（{n} 个）")
+        session.pop("sid", None)
+        return jsonify({"ok": True, "deleted": n})
 
     @app.route("/api/admin/logs")
     @_require_admin
@@ -845,6 +1312,28 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             pass
         return jsonify({"source": "", "logs": "",
                         "hint": "未找到 systemd 日志（journalctl -u bigcat 不可用），请直接在服务器上查看"})
+
+    @app.route("/api/admin/events")
+    @_require_admin
+    def admin_events():
+        try:
+            page = max(1, int(request.args.get("page", 1)))
+        except Exception:
+            page = 1
+        try:
+            per_page = max(10, min(200, int(request.args.get("per_page", 50))))
+        except Exception:
+            per_page = 50
+        return jsonify({
+            "total": store.count_events(),
+            "events": store.list_events(per_page, (page - 1) * per_page),
+        })
+
+    @app.route("/api/admin/events", methods=["DELETE"])
+    @_require_admin
+    def admin_events_clear():
+        n = store.clear_events()
+        return jsonify({"ok": True, "deleted": n})
 
     @app.route("/api/admin/about")
     @_require_admin
@@ -866,6 +1355,383 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
             "started_at": datetime.fromtimestamp(STARTED_AT, timezone.utc).isoformat().replace("+00:00", "Z"),
         })
 
+    # ============================================================ v3 API
+    # ---------------- 统计 ----------------
+    @app.route("/api/admin/stats/traffic")
+    @_require_admin
+    def admin_stats_traffic():
+        try:
+            hours = max(1, min(168, int(request.args.get("hours", 24))))
+        except Exception:
+            hours = 24
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=hours)
+        bucket_sec = max(300, int(hours * 3600 / 48))
+        rows = store.traffic_series(_iso(start), _iso(end), bucket_sec)
+        return jsonify({
+            "labels": [r["time"][11:16] if len(r["time"]) > 16 else r["time"] for r in rows],
+            "up": [r["up"] for r in rows],
+            "down": [r["down"] for r in rows],
+        })
+
+    @app.route("/api/admin/stats/rank")
+    @_require_admin
+    def admin_stats_rank():
+        try:
+            hours = max(1, min(168, int(request.args.get("hours", 24))))
+        except Exception:
+            hours = 24
+        end = datetime.now(timezone.utc)
+        start = _iso(end - timedelta(hours=hours))
+        end_s = _iso(end)
+        out = []
+        for c in store.list_clients():
+            t = store.sum_traffic(c["uuid"], start, end_s)
+            m = store.avg_metrics(c["uuid"], start)
+            out.append({
+                "uuid": c["uuid"],
+                "name": c.get("name") or c["uuid"][:8],
+                "up": t["up"], "down": t["down"], "total": t["up"] + t["down"],
+                "avg_cpu": m["cpu"], "avg_mem": m["mem"],
+                "online": _is_online(c),
+            })
+        return jsonify(out)
+
+    @app.route("/api/admin/stats/ping")
+    @_require_admin
+    def admin_stats_ping():
+        try:
+            hours = max(1, min(720, int(request.args.get("hours", 24))))
+        except Exception:
+            hours = 24
+        since = _iso(datetime.now(timezone.utc) - timedelta(hours=hours))
+        return jsonify(store.ping_stats(since))
+
+    # ---------------- 延迟监测任务 ----------------
+    @app.route("/api/admin/ping/tasks", methods=["GET"])
+    @_require_admin
+    def admin_ping_tasks():
+        return jsonify(store.list_ping_tasks())
+
+    @app.route("/api/admin/ping/tasks", methods=["POST"])
+    @_require_admin
+    def admin_ping_task_add():
+        data = request.get_json(force=True, silent=True) or {}
+        name = (data.get("name") or "").strip()
+        target = (data.get("target") or "").strip()
+        if not name or not target:
+            return jsonify({"error": "name 和 target 必填"}), 400
+        typ = (data.get("type") or "tcp").strip().lower()
+        if typ not in ("tcp", "http", "icmp"):
+            typ = "tcp"
+        try:
+            interval = max(30, min(86400, int(data.get("interval_sec", 300))))
+        except Exception:
+            interval = 300
+        task = store.add_ping_task(name, target, typ, interval)
+        store.log_event("info", "ping", f"新增延迟任务「{name}」（{typ} {target}）")
+        return jsonify(task)
+
+    @app.route("/api/admin/ping/tasks/<int:task_id>", methods=["PUT"])
+    @_require_admin
+    def admin_ping_task_update(task_id):
+        data = request.get_json(force=True, silent=True) or {}
+        fields = {}
+        if "name" in data:
+            fields["name"] = str(data["name"]).strip()
+        if "target" in data:
+            fields["target"] = str(data["target"]).strip()
+        if "type" in data and str(data["type"]).lower() in ("tcp", "http", "icmp"):
+            fields["type"] = str(data["type"]).lower()
+        if "interval_sec" in data:
+            try:
+                fields["interval_sec"] = max(30, min(86400, int(data["interval_sec"])))
+            except Exception:
+                pass
+        if "enabled" in data:
+            fields["enabled"] = 1 if str(data["enabled"]) == "1" else 0
+        store.update_ping_task(task_id, fields)
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/ping/tasks/<int:task_id>", methods=["DELETE"])
+    @_require_admin
+    def admin_ping_task_delete(task_id):
+        store.delete_ping_task(task_id)
+        store.log_event("info", "ping", f"删除延迟任务 {task_id}")
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/ping/results")
+    @_require_admin
+    def admin_ping_results():
+        try:
+            hours = max(1, min(720, int(request.args.get("hours", 24))))
+        except Exception:
+            hours = 24
+        since = _iso(datetime.now(timezone.utc) - timedelta(hours=hours))
+        task_id = request.args.get("task_id")
+        try:
+            task_id = int(task_id) if task_id else None
+        except Exception:
+            task_id = None
+        return jsonify(store.ping_results(task_id, since, limit=2000))
+
+    # ---------------- 负载告警规则 ----------------
+    @app.route("/api/admin/alerts", methods=["GET"])
+    @_require_admin
+    def admin_alerts():
+        return jsonify(store.list_alert_rules())
+
+    @app.route("/api/admin/alerts", methods=["POST"])
+    @_require_admin
+    def admin_alert_add():
+        data = request.get_json(force=True, silent=True) or {}
+        name = (data.get("name") or "").strip() or "未命名规则"
+        metric = str(data.get("metric", "cpu")).lower()
+        if metric not in ("cpu", "ram", "disk"):
+            metric = "cpu"
+        try:
+            threshold = max(1, min(100, float(data.get("threshold", 90))))
+        except Exception:
+            threshold = 90
+        try:
+            ratio = max(0.1, min(1.0, float(data.get("ratio", 0.8))))
+        except Exception:
+            ratio = 0.8
+        try:
+            interval = max(1, min(1440, int(data.get("interval_min", 2))))
+        except Exception:
+            interval = 2
+        clients = data.get("clients") or []
+        if not isinstance(clients, list):
+            clients = []
+        rule = store.add_alert_rule(name, metric, threshold, ratio, interval,
+                                    json.dumps([str(x) for x in clients]))
+        store.log_event("info", "alert", f"新增告警规则「{name}」")
+        return jsonify(rule)
+
+    @app.route("/api/admin/alerts/<int:rule_id>", methods=["PUT"])
+    @_require_admin
+    def admin_alert_update(rule_id):
+        data = request.get_json(force=True, silent=True) or {}
+        fields = {}
+        if "name" in data:
+            fields["name"] = str(data["name"]).strip()
+        if "metric" in data and str(data["metric"]).lower() in ("cpu", "ram", "disk"):
+            fields["metric"] = str(data["metric"]).lower()
+        for k in ("threshold", "ratio", "interval_min", "enabled"):
+            if k in data:
+                fields[k] = data[k]
+        store.update_alert_rule(rule_id, fields)
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/alerts/<int:rule_id>", methods=["DELETE"])
+    @_require_admin
+    def admin_alert_delete(rule_id):
+        store.delete_alert_rule(rule_id)
+        return jsonify({"ok": True})
+
+    # ---------------- 通知 ----------------
+    @app.route("/api/admin/notify/channels", methods=["GET"])
+    @_require_admin
+    def admin_notify_channels():
+        return jsonify(_get_channels())
+
+    @app.route("/api/admin/notify/channels", methods=["POST"])
+    @_require_admin
+    def admin_notify_channel_add():
+        data = request.get_json(force=True, silent=True) or {}
+        typ = str(data.get("type", "webhook")).lower()
+        if typ not in ("webhook", "telegram", "bark"):
+            return jsonify({"error": "未知渠道类型"}), 400
+        ch = _get_channels()
+        ch.append({
+            "name": (data.get("name") or typ).strip()[:50],
+            "type": typ,
+            "enabled": bool(data.get("enabled", True)),
+            "config": data.get("config") or {},
+        })
+        _save_channels(ch)
+        return jsonify({"ok": True, "index": len(ch) - 1})
+
+    @app.route("/api/admin/notify/channels/<int:index>", methods=["PUT"])
+    @_require_admin
+    def admin_notify_channel_update(index):
+        data = request.get_json(force=True, silent=True) or {}
+        ch = _get_channels()
+        if not (0 <= index < len(ch)):
+            return jsonify({"error": "渠道不存在"}), 404
+        c = ch[index]
+        if "name" in data:
+            c["name"] = str(data["name"]).strip()[:50]
+        if "enabled" in data:
+            c["enabled"] = bool(data["enabled"])
+        if "config" in data:
+            c["config"] = data["config"] or {}
+        _save_channels(ch)
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/notify/channels/<int:index>", methods=["DELETE"])
+    @_require_admin
+    def admin_notify_channel_delete(index):
+        ch = _get_channels()
+        if not (0 <= index < len(ch)):
+            return jsonify({"error": "渠道不存在"}), 404
+        ch.pop(index)
+        _save_channels(ch)
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/notify/offline")
+    @_require_admin
+    def admin_notify_offline():
+        return jsonify([{
+            "uuid": c["uuid"],
+            "name": c.get("name") or c["uuid"][:8],
+            "online": _is_online(c),
+            "notify_offline": c.get("notify_offline", 1),
+            "offline_grace": c.get("offline_grace") or _online_threshold(),
+        } for c in store.list_clients()])
+
+    @app.route("/api/admin/notify/offline/<client_uuid>", methods=["PUT"])
+    @_require_admin
+    def admin_notify_offline_update(client_uuid):
+        data = request.get_json(force=True, silent=True) or {}
+        fields = {}
+        if "notify_offline" in data:
+            fields["notify_offline"] = 1 if str(data["notify_offline"]) == "1" else 0
+        if "offline_grace" in data:
+            try:
+                fields["offline_grace"] = max(30, min(86400, int(data["offline_grace"])))
+            except Exception:
+                pass
+        if not store.get_client(client_uuid):
+            return jsonify({"error": "node not found"}), 404
+        store.update_client(client_uuid, fields)
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/notify/traffic", methods=["GET"])
+    @_require_admin
+    def admin_notify_traffic_get():
+        return jsonify([{
+            "uuid": c["uuid"],
+            "name": c.get("name") or c["uuid"][:8],
+            "report_enabled": c.get("report_enabled", 0),
+            "report_types": c.get("report_types") or "",
+        } for c in store.list_clients()])
+
+    @app.route("/api/admin/notify/traffic", methods=["PUT"])
+    @_require_admin
+    def admin_notify_traffic_put():
+        data = request.get_json(force=True, silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "invalid body"}), 400
+        for uuid, cfg in data.items():
+            if not store.get_client(uuid):
+                continue
+            fields = {}
+            if isinstance(cfg, dict):
+                if "report_enabled" in cfg:
+                    fields["report_enabled"] = 1 if str(cfg["report_enabled"]) == "1" else 0
+                if "report_types" in cfg:
+                    types = [t for t in str(cfg["report_types"]).split(",") if t in ("daily", "weekly", "monthly")]
+                    fields["report_types"] = ",".join(types)
+                store.update_client(uuid, fields)
+        return jsonify({"ok": True})
+
+    # ---------------- 2FA ----------------
+    @app.route("/api/admin/2fa")
+    @_require_admin
+    def admin_2fa_status():
+        return jsonify({"enabled": (store.get_setting("totp_enabled", "0") or "0") == "1"})
+
+    @app.route("/api/admin/2fa/setup", methods=["POST"])
+    @_require_admin
+    def admin_2fa_setup():
+        secret = _new_totp_secret()
+        session["totp_pending"] = secret
+        user = store.get_admin_username()
+        uri = (f"otpauth://totp/bigcat:{user}?secret={secret}"
+               f"&issuer=bigcat&algorithm=SHA1&digits=6&period=30")
+        return jsonify({"secret": secret, "uri": uri})
+
+    @app.route("/api/admin/2fa/enable", methods=["POST"])
+    @_require_admin
+    def admin_2fa_enable():
+        data = request.get_json(force=True, silent=True) or {}
+        secret = session.get("totp_pending")
+        if not secret:
+            return jsonify({"error": "请先生成密钥"}), 400
+        if _totp_verify(secret, data.get("code", "")):
+            store.set_setting("totp_secret", secret)
+            store.set_setting("totp_enabled", "1")
+            session.pop("totp_pending", None)
+            store.log_event("info", "auth", "管理员启用了双重认证")
+            return jsonify({"ok": True})
+        return jsonify({"error": "验证码错误"}), 400
+
+    @app.route("/api/admin/2fa/disable", methods=["POST"])
+    @_require_admin
+    def admin_2fa_disable():
+        data = request.get_json(force=True, silent=True) or {}
+        if not store.verify_admin(data.get("password", ""), store.get_admin_username()):
+            return jsonify({"error": "密码错误"}), 401
+        store.set_setting("totp_enabled", "0")
+        store.log_event("warn", "auth", "管理员关闭了双重认证")
+        return jsonify({"ok": True})
+
+    # ---------------- 远程执行 ----------------
+    @app.route("/api/admin/exec", methods=["POST"])
+    @_require_admin
+    def admin_exec():
+        data = request.get_json(force=True, silent=True) or {}
+        command = (data.get("command") or "").strip()
+        uuids = data.get("client_uuids") or []
+        if not command or not uuids:
+            return jsonify({"error": "command 和 client_uuids 必填"}), 400
+        created = [store.add_exec_task(u, command[:2000])["id"]
+                   for u in uuids if store.get_client(u)]
+        store.log_event("warn", "exec",
+                        f"管理员下发远程执行命令（{len(created)} 个节点）: {command[:120]}")
+        return jsonify({"ok": True, "task_ids": created})
+
+    @app.route("/api/admin/exec/tasks")
+    @_require_admin
+    def admin_exec_tasks():
+        try:
+            limit = max(10, min(500, int(request.args.get("limit", 50))))
+        except Exception:
+            limit = 50
+        rows = store.list_exec_tasks(limit)
+        names = {c["uuid"]: (c.get("name") or c["uuid"][:8]) for c in store.list_clients()}
+        for r in rows:
+            r["client_name"] = names.get(r["client_uuid"], r["client_uuid"][:8])
+        return jsonify(rows)
+
+    # ---------------- 数据库维护 ----------------
+    @app.route("/api/admin/db/info")
+    @_require_admin
+    def admin_db_info():
+        cur = store._conn.cursor()
+        ping_n = cur.execute("SELECT COUNT(*) FROM ping_results").fetchone()[0]
+        sess_n = cur.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        return jsonify({
+            "db_size": store.db_size(),
+            "records": store.count_records(),
+            "events": store.count_events(),
+            "ping_results": ping_n,
+            "sessions": sess_n,
+            "record_keep_hours": store.get_setting("record_keep_hours", "24"),
+        })
+
+    @app.route("/api/admin/db/vacuum", methods=["POST"])
+    @_require_admin
+    def admin_db_vacuum():
+        res = store.vacuum()
+        store.log_event("info", "db",
+                        f"数据库压缩完成：{res['before']} → {res['after']} 字节")
+        return jsonify({"ok": True, **res})
+
+    # ============================================================ v3 API end
+
     # ------------------------------------------------------------ SPA fallback
     # 必须注册在所有路由之后：/traffic、/instance/xxx 等前端路由刷新或直连时
     # 返回 index.html 交给前端路由接管；未知 API 路径返回 JSON 404
@@ -874,6 +1740,13 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR):
         if p.startswith("api/"):
             return jsonify({"error": "not found"}), 404
         return send_from_directory(app.config["static_dir"], "index.html")
+
+    # 后台监控线程：离线检测 / 告警 / 延迟监测 / 到期提醒 / 流量报告。
+    # enable_monitor=False 时（单元测试）不启动。
+    if enable_monitor and not app.config.get("monitor_started"):
+        app.config["monitor_started"] = True
+        threading.Thread(target=_monitor_loop, daemon=True, name="bigcat-monitor").start()
+        print(f"[bigcat] monitor thread started (interval 30s)")
 
     return app
 
