@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bigcat 卸载脚本（Debian / Ubuntu）
+# BigCat 卸载脚本（Debian / Ubuntu）
 #
 #   sudo bash uninstall.sh server   # 只卸载主控端
 #   sudo bash uninstall.sh agent    # 只卸载被控端
@@ -13,8 +13,8 @@ PURGE="no"
 
 INSTALL_DIR="/opt/bigcat"
 
-log() { echo "[bigcat] $*"; }
-die() { echo "[bigcat] 错误: $*" >&2; exit 1; }
+log() { echo "[BigCat] $*"; }
+die() { echo "[BigCat] 错误: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "请用 root 运行此脚本（加 sudo）"
 

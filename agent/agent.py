@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-bigcat agent.
+BigCat agent.
 
-Collects host metrics with psutil and reports them to a bigcat server,
+Collects host metrics with psutil and reports them to a BigCat server,
 using the Komari v2 report shape (protocol/v2) over plain HTTPS POST.
 
 Usage:
@@ -97,7 +97,7 @@ def collect_basic_info(args=None):
         "mem_total": vm.total,
         "swap_total": sm.total,
         "disk_total": du.total,
-        "version": "bigcat-agent/1.0.0",
+        "version": "BigCat-agent/1.0.0",
         "name": socket.gethostname(),
     }
     if args is not None:
@@ -340,7 +340,7 @@ def detect_nic_ip() -> str:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="bigcat agent")
+    ap = argparse.ArgumentParser(description="BigCat agent")
     ap.add_argument("--server", required=True, help="master URL, e.g. http://1.2.3.4:25774")
     ap.add_argument("--token", required=True, help="node token from /api/agent/register")
     ap.add_argument("--interval", type=float, default=2.0, help="report interval seconds")

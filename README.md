@@ -1,6 +1,6 @@
-# bigcat
+# BigCat
 
-bigcat 是一个轻量、开箱即用的 VPS 实时监控方案，API 与 [Komari](https://github.com/komari-monitor/komari) 兼容，前端直接使用 LuminaPlus 主题（Komari-Theme-LuminaPlus v1.3.4）的构建产物，界面与 Komari 一致。
+BigCat 是一个轻量、开箱即用的 VPS 实时监控方案，API 与 [Komari](https://github.com/komari-monitor/komari) 兼容，前端直接使用 LuminaPlus 主题（Komari-Theme-LuminaPlus v1.3.4）的构建产物，界面与 Komari 一致。
 
 - **服务端**：Python + Flask，SQLite 存储，无需编译 Go。
 - **Agent**：Python + psutil，单文件，可在被监控的 VPS 上运行，定时上报 CPU / 内存 / 磁盘 / 网络 / 负载等指标。

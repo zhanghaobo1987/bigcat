@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-  bigcat 卸载脚本（Windows）
+  BigCat 卸载脚本（Windows）
 
 .DESCRIPTION
   以管理员身份运行 PowerShell:
@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = "Stop"
 $InstallDir = "C:\Program Files\bigcat"
 
-function Log([string]$msg) { Write-Host "[bigcat] $msg" }
+function Log([string]$msg) { Write-Host "[BigCat] $msg" }
 
 function Remove-Task([string]$name) {
   $t = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue

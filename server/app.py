@@ -1,5 +1,5 @@
 """
-bigcat server.
+BigCat server.
 
 A Komari-compatible VPS monitoring server implemented with Flask.
 Serves the LuminaPlus theme frontend and exposes the same public API
@@ -379,7 +379,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                     return False
                 server = (cfg.get("server") or "https://api.day.app").rstrip("/")
                 url = f"{server}/{key}"
-                body = json.dumps({"title": "bigcat", "body": text}).encode("utf-8")
+                body = json.dumps({"title": "BigCat", "body": text}).encode("utf-8")
                 req = urllib.request.Request(
                     url, data=body, headers={"Content-Type": "application/json"},
                     method="POST")
@@ -487,7 +487,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 s.close()
             elif typ == "http":
                 url = target if target.startswith("http") else "http://" + target
-                req = urllib.request.Request(url, headers={"User-Agent": "bigcat-ping/1.0"})
+                req = urllib.request.Request(url, headers={"User-Agent": "BigCat-ping/1.0"})
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     resp.read(1024)
             elif typ == "icmp":
@@ -1300,7 +1300,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         try:
             req = urllib.request.Request(
                 f"http://ip-api.com/json/{ip}?fields=status,countryCode",
-                headers={"User-Agent": "bigcat"},
+                headers={"User-Agent": "BigCat"},
             )
             with urllib.request.urlopen(req, timeout=10) as r:
                 d = json.loads(r.read().decode("utf-8", "ignore"))
@@ -1725,12 +1725,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 ch = _get_channels()[int(data["index"])]
             except Exception:
                 return jsonify({"error": "渠道不存在"}), 404
-            ok = _send_channel(ch, _render_msg("测试", "bigcat 通知测试：渠道工作正常"))
+            ok = _send_channel(ch, _render_msg("测试", "BigCat 通知测试：渠道工作正常"))
             return jsonify({"ok": ok} if ok else {"error": "发送失败，请检查渠道配置"}), 200 if ok else 502
         url = (data.get("webhook") or store.get_setting("notify_webhook", "") or "").strip()
         if not url:
             return jsonify({"error": "webhook url required"}), 400
-        ok = _post_webhook(url, "✅ bigcat 通知测试：webhook 工作正常", timeout=10)
+        ok = _post_webhook(url, "✅ BigCat 通知测试：webhook 工作正常", timeout=10)
         return jsonify({"ok": ok} if ok else {"error": "webhook 发送失败，请检查 URL"}), 200 if ok else 502
 
     @app.route("/api/admin/account", methods=["POST"])
@@ -2135,8 +2135,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         secret = _new_totp_secret()
         session["totp_pending"] = secret
         user = store.get_admin_username()
-        uri = (f"otpauth://totp/bigcat:{user}?secret={secret}"
-               f"&issuer=bigcat&algorithm=SHA1&digits=6&period=30")
+        uri = (f"otpauth://totp/BigCat:{user}?secret={secret}"
+               f"&issuer=BigCat&algorithm=SHA1&digits=6&period=30")
         return jsonify({"secret": secret, "uri": uri})
 
     @app.route("/api/admin/2fa/enable", methods=["POST"])
@@ -2291,7 +2291,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             owner, repo = m.group(1), m.group(2)
             req = urllib.request.Request(
                 f"https://api.github.com/repos/{owner}/{repo}/releases/latest",
-                headers={"User-Agent": "bigcat", "Accept": "application/vnd.github+json"})
+                headers={"User-Agent": "BigCat", "Accept": "application/vnd.github+json"})
             try:
                 with urllib.request.urlopen(req, timeout=20) as r:
                     rel = json.loads(r.read().decode("utf-8"))
@@ -2302,7 +2302,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             if not zip_url:
                 raise ValueError("该仓库最新 release 中没有 zip 资源")
             url = zip_url
-        req = urllib.request.Request(url, headers={"User-Agent": "bigcat"})
+        req = urllib.request.Request(url, headers={"User-Agent": "BigCat"})
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 data = r.read(_MAX_THEME_TOTAL_SIZE + 1)
@@ -2318,8 +2318,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         active = _active_theme_short()
         themes = [{
             "name": "默认主题（内置 LuminaPlus）", "short": "default",
-            "description": "bigcat 内置前台主题", "version": VERSION,
-            "author": "bigcat", "url": "", "preview": "",
+            "description": "BigCat 内置前台主题", "version": VERSION,
+            "author": "BigCat", "url": "", "preview": "",
             "active": active == "default",
         }]
         try:
@@ -2502,7 +2502,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         except Exception:
             return jsonify({"error": "备份文件不是有效的 JSON"}), 400
         if not isinstance(payload, dict) or payload.get("format") != "bigcat-backup":
-            return jsonify({"error": "不是有效的 bigcat 备份文件"}), 400
+            return jsonify({"error": "不是有效的 BigCat 备份文件"}), 400
         try:
             store.import_config(payload.get("data") or {})
         except ValueError as e:
@@ -2527,7 +2527,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     if enable_monitor and not app.config.get("monitor_started"):
         app.config["monitor_started"] = True
         threading.Thread(target=_monitor_loop, daemon=True, name="bigcat-monitor").start()
-        print(f"[bigcat] monitor thread started (interval 30s)")
+        print(f"[BigCat] monitor thread started (interval 30s)")
 
     return app
 
@@ -2535,7 +2535,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 def main():
     import argparse
 
-    ap = argparse.ArgumentParser(description="bigcat server")
+    ap = argparse.ArgumentParser(description="BigCat server")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=25774)
     ap.add_argument("--db", default="data/bigcat.db")
@@ -2557,7 +2557,7 @@ def main():
         return
     if not store.has_admin():
         print("NOTE: no admin account set. Run with --set-admin <user:pass> first.")
-    print(f"bigcat server v{VERSION} listening on http://{args.host}:{args.port}")
+    print(f"BigCat server v{VERSION} listening on http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, threaded=True)
 
 

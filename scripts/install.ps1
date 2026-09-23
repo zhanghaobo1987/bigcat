@@ -1,7 +1,7 @@
 ﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-  bigcat 一键安装脚本（Windows）
+  BigCat 一键安装脚本（Windows）
 
 .DESCRIPTION
   首次安装会交互式询问端口 / 管理员用户名 / 密码等，
@@ -80,8 +80,8 @@ $ZipUrl = $RepoUrl.TrimEnd('/') + "/archive/refs/heads/main.zip"
 $VenvPythonw = Join-Path $InstallDir "venv\Scripts\pythonw.exe"
 $VenvPython  = Join-Path $InstallDir "venv\Scripts\python.exe"
 
-function Log([string]$msg) { Write-Host "[bigcat] $msg" }
-function Die([string]$msg) { Write-Host "[bigcat] 错误: $msg" -ForegroundColor Red; exit 1 }
+function Log([string]$msg) { Write-Host "[BigCat] $msg" }
+function Die([string]$msg) { Write-Host "[BigCat] 错误: $msg" -ForegroundColor Red; exit 1 }
 
 function Read-Secret([string]$prompt, [switch]$Required) {
   # 交互式读取密码（带确认）；Required 时不允许为空
@@ -171,7 +171,7 @@ function Install-Server {
     $upgrade = $true
   }
   if ($upgrade) {
-    Log "检测到已安装 bigcat，进入升级模式：保留原有配置（端口=$Port、管理员账号与数据不动），仅更新程序并重启"
+    Log "检测到已安装 BigCat，进入升级模式：保留原有配置（端口=$Port、管理员账号与数据不动），仅更新程序并重启"
   } else {
     # ---- 交互式收集配置（参数优先）----
     if (-not $PSBoundParameters.ContainsKey("Port")) {
@@ -219,7 +219,7 @@ function Install-Server {
   $settings = New-ScheduledTaskSettingsSet -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
   Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Force `
-    -Principal $principal -Settings $settings -Description "bigcat monitoring server" | Out-Null
+    -Principal $principal -Settings $settings -Description "BigCat monitoring server" | Out-Null
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   Start-ScheduledTask -TaskName $taskName
   Log "计划任务 $taskName 已创建并启动（开机自启）"
@@ -281,7 +281,7 @@ function Install-Agent {
   $settings = New-ScheduledTaskSettingsSet -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
   Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Force `
-    -Principal $principal -Settings $settings -Description "bigcat monitoring agent" | Out-Null
+    -Principal $principal -Settings $settings -Description "BigCat monitoring agent" | Out-Null
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   Start-ScheduledTask -TaskName $taskName
   Log "计划任务 $taskName 已创建并启动（开机自启）"
@@ -292,7 +292,7 @@ if (-not $Mode) {
   # 通过 irm ... | iex 一键运行时无法传参，改为交互式选择
   if ($Host.Name -eq "ConsoleHost") {
     Write-Host ""
-    Write-Host "  bigcat 一键安装"
+    Write-Host "  BigCat 一键安装"
     Write-Host "  [1] server  主控端（监控服务端）"
     Write-Host "  [2] agent   被控端（上报本机指标）"
     Write-Host ""

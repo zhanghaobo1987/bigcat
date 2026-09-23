@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# bigcat 一键安装脚本（Debian / Ubuntu）
+# BigCat 一键安装脚本（Debian / Ubuntu）
 #
-# 一键粘贴安装（安装过程中会交互式询问端口 / 管理员用户名 / 密码等）:
+# 一键粘贴安装（首次安装会交互式询问端口 / 管理员用户名 / 密码等）:
 #   curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- server
+#
+# 重复运行即升级：检测到已安装后自动复用原有配置（端口/账号/密码/主控地址/token），
+# 直接更新程序并重启，不再重复提问。如需改端口可加 --port 参数；如需重置管理员密码可加 --admin-password 参数。
 #
 # 被控端（agent）:
 #   curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install.sh | sudo bash -s -- agent
@@ -80,8 +83,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-log() { echo "[bigcat] $*" >&2; }  # 输出到 stderr，避免污染 $(...) 命令替换捕获的路径
-die() { echo "[bigcat] 错误: $*" >&2; exit 1; }
+log() { echo "[BigCat] $*" >&2; }  # 输出到 stderr，避免污染 $(...) 命令替换捕获的路径
+die() { echo "[BigCat] 错误: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 交互式提问
 # 关键：从 /dev/tty 读取，而不是 stdin，这样 curl ... | bash 管道模式下也能提问
@@ -191,19 +194,41 @@ open_firewall() {
   fi
 }
 
+# ---------------------------------------------------------------- 升级检测
+# 已安装检测：systemd 单元或程序目录存在即视为已安装，进入升级模式
+is_server_installed() { [ -f /etc/systemd/system/bigcat.service ] || [ -f "$INSTALL_DIR/server/app.py" ]; }
+is_agent_installed()  { [ -f "/etc/systemd/system/${AGENT_SERVICE}.service" ] || [ -f "$INSTALL_DIR/agent.py" ]; }
+# 从已安装的 systemd 单元 ExecStart 行中读取 --<参数名> 后面的值
+# （单元文件不存在时返回空串，不报错，避免 set -e/pipefail 直接退出）
+unit_arg() { # unit_arg <单元文件> <参数名>
+  sed -n "s/.*--$2 \([^ ]*\).*/\1/p" "$1" 2>/dev/null | head -1 || true
+}
+
 # ---------------------------------------------------------------- 安装
 install_server() {
   need_root
 
-  # ---- 交互式收集配置（参数/环境变量优先）----
-  [ -n "$PORT" ]         || PORT="$(ask "服务端监听端口" "$DEFAULT_PORT")"
-  [ -n "$ADMIN_USER" ]   || ADMIN_USER="$(ask "管理员用户名" "admin")"
-  if [ "$PASSWORD_GIVEN" = "no" ]; then
-    ADMIN_PASSWORD="$(ask_secret "管理员密码（留空则跳过，可稍后设置）")"
+  # ---- 升级检测：已安装则复用原有配置，跳过端口/账号/密码提问 ----
+  UPGRADE="no"
+  is_server_installed && UPGRADE="yes"
+  if [ -z "$PORT" ]; then
+    SAVED_PORT="$(unit_arg /etc/systemd/system/bigcat.service port)"
+    [ -n "$SAVED_PORT" ] && PORT="$SAVED_PORT"
+  fi
+
+  if [ "$UPGRADE" = "yes" ]; then
+    [ -n "$PORT" ] || PORT="$DEFAULT_PORT"
+    log "检测到已安装 BigCat，进入升级模式：保留原有配置（端口=$PORT、管理员账号与数据不动），仅更新程序并重启"
+  else
+    # ---- 交互式收集配置（参数/环境变量优先）----
+    [ -n "$PORT" ]         || PORT="$(ask "服务端监听端口" "$DEFAULT_PORT")"
+    [ -n "$ADMIN_USER" ]   || ADMIN_USER="$(ask "管理员用户名" "admin")"
+    if [ "$PASSWORD_GIVEN" = "no" ]; then
+      ADMIN_PASSWORD="$(ask_secret "管理员密码（留空则跳过，可稍后设置）")"
+    fi
+    log "配置: 端口=$PORT, 管理员=$ADMIN_USER"
   fi
   case "$PORT" in ''|*[!0-9]*) die "端口必须是数字" ;; esac
-
-  log "配置: 端口=$PORT, 管理员=$ADMIN_USER"
   local src
   src="$(ensure_sources "$(cd "$(dirname "$0")" && pwd)")"
   log "安装服务端..."
@@ -214,9 +239,12 @@ install_server() {
   setup_venv
 
   if [ -n "$ADMIN_PASSWORD" ]; then
+    [ -n "$ADMIN_USER" ] || ADMIN_USER="admin"
     (cd "$INSTALL_DIR/server" && "$VENV/bin/python" app.py --db "$INSTALL_DIR/data/bigcat.db" \
       --set-admin "$ADMIN_USER:$ADMIN_PASSWORD" >/dev/null)
     log "管理员账号已设置（用户名: $ADMIN_USER）"
+  elif [ "$UPGRADE" = "yes" ]; then
+    log "升级模式：保留原有管理员账号（如需重置，重新运行时加 --admin-password 参数）"
   else
     log "未设置管理员账号，稍后可用以下命令设置："
     log "  $VENV/bin/python $INSTALL_DIR/server/app.py --db $INSTALL_DIR/data/bigcat.db --set-admin \"用户名:密码\""
@@ -224,7 +252,7 @@ install_server() {
 
   cat >/etc/systemd/system/bigcat.service <<EOF
 [Unit]
-Description=bigcat monitoring server
+Description=BigCat monitoring server
 After=network.target
 
 [Service]
@@ -250,6 +278,17 @@ EOF
 
 install_agent() {
   need_root
+
+  # ---- 升级检测：已安装则复用原主控地址与 token，跳过提问 ----
+  UPGRADE="no"
+  is_agent_installed && UPGRADE="yes"
+  AGENT_UNIT="/etc/systemd/system/${AGENT_SERVICE}.service"
+  LEGACY_UNIT="/etc/systemd/system/bigcat-agent.service"
+  [ -z "$SERVER_URL" ] && SERVER_URL="$(unit_arg "$AGENT_UNIT" server)"
+  [ -z "$SERVER_URL" ] && SERVER_URL="$(unit_arg "$LEGACY_UNIT" server)"
+  [ -z "$TOKEN" ] && TOKEN="$(unit_arg "$AGENT_UNIT" token)"
+  [ -z "$TOKEN" ] && TOKEN="$(unit_arg "$LEGACY_UNIT" token)"
+  [ "$UPGRADE" = "yes" ] && log "检测到已安装 agent，进入升级模式：保留原有主控地址与 token，仅更新程序并重启"
 
   [ -n "$SERVER_URL" ] || SERVER_URL="$(ask_required "主控地址（例如 http://主控IP:25774）")"
   if [ -z "$TOKEN" ]; then
@@ -284,7 +323,7 @@ install_agent() {
 
   cat >/etc/systemd/system/${AGENT_SERVICE}.service <<EOF
 [Unit]
-Description=bigcat monitoring agent
+Description=BigCat monitoring agent
 After=network.target
 
 [Service]
@@ -301,6 +340,12 @@ EOF
   systemctl daemon-reload
   systemctl enable $AGENT_SERVICE
   systemctl restart $AGENT_SERVICE   # 重装/升级时确保加载新代码
+  # 服务改名时卸载旧单元，避免重复上报
+  if [ "$AGENT_SERVICE" != "bigcat-agent" ] && [ -f "$LEGACY_UNIT" ]; then
+    systemctl disable --now bigcat-agent 2>/dev/null || true
+    rm -f "$LEGACY_UNIT"
+    log "已移除旧 systemd 服务 bigcat-agent"
+  fi
   log "agent 已启动，正在向 $SERVER_URL 上报"
 }
 

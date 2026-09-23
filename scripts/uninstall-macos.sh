@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bigcat 卸载脚本（macOS）
+# BigCat 卸载脚本（macOS）
 #
 #   sudo bash uninstall-macos.sh server   # 只卸载主控端
 #   sudo bash uninstall-macos.sh agent    # 只卸载被控端
@@ -14,8 +14,8 @@ PURGE="no"
 INSTALL_DIR="/usr/local/bigcat"
 PLIST_DIR="/Library/LaunchDaemons"
 
-log() { echo "[bigcat] $*"; }
-die() { echo "[bigcat] 错误: $*" >&2; exit 1; }
+log() { echo "[BigCat] $*"; }
+die() { echo "[BigCat] 错误: $*" >&2; exit 1; }
 
 [ "$(uname)" = "Darwin" ] || die "此脚本仅适用于 macOS"
 [ "$(id -u)" -eq 0 ] || die "请用 root 运行此脚本（加 sudo）"

@@ -1,5 +1,5 @@
 [Unit]
-Description=bigcat monitoring server
+Description=BigCat monitoring server
 After=network.target
 
 [Service]

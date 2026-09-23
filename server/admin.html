@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>bigcat 后台管理</title>
+<title>BigCat 后台管理</title>
 <style>
   :root { --bg:#0b0f14; --card:#131a23; --border:#232d3a; --text:#e6edf3;
           --muted:#8b98a9; --accent:#2f81f7; --danger:#f85149; --ok:#3fb950; --warn:#d29922; --code-bg:#0d131b; }
@@ -128,7 +128,7 @@
 
 <!-- 登录 / 初始化 -->
 <div id="view-auth" class="card center hidden" style="margin:8vh auto;max-width:400px">
-  <h1>🐱 bigcat 后台</h1>
+  <h1>🐱 BigCat 后台</h1>
   <div id="auth-setup">
     <p class="muted">首次使用，请创建管理员账号。</p>
     <label>管理员用户名</label>
@@ -157,7 +157,7 @@
 <!-- 主界面 -->
 <div id="view-main" class="layout hidden">
   <aside>
-    <a class="brand" href="/" target="_blank" rel="noopener" title="在新标签页打开前台监控页"><h1>🐱 bigcat</h1></a>
+    <a class="brand" href="/" target="_blank" rel="noopener" title="在新标签页打开前台监控页"><h1>🐱 BigCat</h1></a>
     <p class="ver" id="side-ver"></p>
     <nav id="nav"></nav>
     <div style="margin-top:16px;padding:0 8px">
@@ -209,7 +209,7 @@
           <h2 style="margin:0">延迟监测任务</h2>
           <button class="small" id="btn-add-ping">＋ 新增任务</button>
         </div>
-        <p class="muted">由 bigcat 主控每间隔定时探测（TCP / HTTP / ICMP），结果保留 72 小时。</p>
+        <p class="muted">由 BigCat 主控每间隔定时探测（TCP / HTTP / ICMP），结果保留 72 小时。</p>
         <table>
           <thead><tr><th>任务</th><th>目标</th><th>类型</th><th>间隔</th><th>绑定节点</th><th>最近延迟</th><th>可用率</th><th>启用</th><th>操作</th></tr></thead>
           <tbody id="ping-body"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
@@ -760,7 +760,7 @@ function go(p) {
   const v = await api('/api/version');
   if (v.data && v.data.version) {
     $('side-ver').textContent = 'v' + v.data.version;
-    $('ver-foot').textContent = 'bigcat v' + v.data.version;
+    $('ver-foot').textContent = 'BigCat v' + v.data.version;
   }
 })();
 
@@ -1808,7 +1808,7 @@ async function loadAbout() {
   const up = data.uptime_sec;
   const upStr = Math.floor(up/86400) + ' 天 ' + Math.floor(up%86400/3600) + ' 小时 ' + Math.floor(up%3600/60) + ' 分钟';
   $('about-body').innerHTML = [
-    ['bigcat 版本', 'v' + data.bigcat], ['Python', data.python], ['Flask', data.flask],
+    ['BigCat 版本', 'v' + data.bigcat], ['Python', data.python], ['Flask', data.flask],
     ['系统', data.platform], ['数据库', data.db_path + '（' + fmtSize(data.db_size) + '）'],
     ['监控记录数', data.records], ['启动时间', data.started_at], ['运行时长', upStr],
   ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(String(v))}</span></div>`).join('');

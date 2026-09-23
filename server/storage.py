@@ -106,7 +106,7 @@ class Storage:
             self._conn.commit()
             # default settings
             defaults = {
-                "sitename": "bigcat Monitor",
+                "sitename": "BigCat Monitor",
                 "description": "A lightweight VPS monitor, Komari-compatible.",
                 "theme": "LuminaPlus",
                 "admin_password": "",  # set on first run via CLI
@@ -454,7 +454,7 @@ class Storage:
     @staticmethod
     def _default_settings() -> dict:
         return {
-            "sitename": "bigcat Monitor",
+            "sitename": "BigCat Monitor",
             "description": "A lightweight VPS monitor, Komari-compatible.",
             "theme": "LuminaPlus",
             "admin_password": "",  # set on first run via CLI

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bigcat 一键安装脚本（macOS）
+# BigCat 一键安装脚本（macOS）
 #
 # 一键粘贴安装（首次安装会交互式询问端口 / 管理员用户名 / 密码等）:
 #   curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-macos.sh | sudo bash -s -- server
@@ -66,8 +66,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-log() { echo "[bigcat] $*" >&2; }  # 输出到 stderr，避免污染 $(...) 命令替换捕获的路径
-die() { echo "[bigcat] 错误: $*" >&2; exit 1; }
+log() { echo "[BigCat] $*" >&2; }  # 输出到 stderr，避免污染 $(...) 命令替换捕获的路径
+die() { echo "[BigCat] 错误: $*" >&2; exit 1; }
 
 [ "$(uname)" = "Darwin" ] || die "此脚本仅适用于 macOS"
 [ "$(id -u)" -eq 0 ] || die "请用 root 运行此脚本（加 sudo），以便注册系统级 launchd 服务"
@@ -209,7 +209,7 @@ install_server() {
 
   if [ "$UPGRADE" = "yes" ]; then
     [ -n "$PORT" ] || PORT="$DEFAULT_PORT"
-    log "检测到已安装 bigcat，进入升级模式：保留原有配置（端口=$PORT、管理员账号与数据不动），仅更新程序并重启"
+    log "检测到已安装 BigCat，进入升级模式：保留原有配置（端口=$PORT、管理员账号与数据不动），仅更新程序并重启"
   else
     # ---- 交互式收集配置（参数/环境变量优先）----
     [ -n "$PORT" ]         || PORT="$(ask "服务端监听端口" "$DEFAULT_PORT")"
