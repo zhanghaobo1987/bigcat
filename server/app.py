@@ -38,6 +38,7 @@ import base64
 import subprocess
 import threading
 import time
+import ipaddress
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import version as _pkg_version
@@ -1218,11 +1219,75 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         store.update_client(client["uuid"], fields)
         return jsonify({"ok": True})
 
+    # ------------------------------------------------------------ GeoIP 地区自动填充
+    _GEOIP_TRY_AT = {}  # client_uuid -> 上次尝试时间戳（内存节流，每节点最多 1 小时一次）
+
+    def _request_public_ip() -> str:
+        """从请求头/连接信息中取出第一个公网 IP；无则返回空字符串。"""
+        candidates = []
+        fwd = request.headers.get("X-Forwarded-For", "")
+        if fwd:
+            candidates.extend(x.strip() for x in fwd.split(","))
+        real = request.headers.get("X-Real-IP", "").strip()
+        if real:
+            candidates.append(real)
+        if request.remote_addr:
+            candidates.append(request.remote_addr.strip())
+        for cand in candidates:
+            try:
+                ip = ipaddress.ip_address(cand)
+            except ValueError:
+                continue
+            if ip.is_global:
+                return cand
+        return ""
+
+    def _geoip_lookup(ip: str) -> str:
+        """ip-api.com 免费接口查询国家二字码；失败返回空字符串。"""
+        try:
+            req = urllib.request.Request(
+                f"http://ip-api.com/json/{ip}?fields=status,countryCode",
+                headers={"User-Agent": "bigcat"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                d = json.loads(r.read().decode("utf-8", "ignore"))
+            if d.get("status") == "success" and d.get("countryCode"):
+                return str(d["countryCode"]).upper()
+        except Exception:
+            pass
+        return ""
+
+    def _maybe_geoip_region(client_uuid: str) -> None:
+        now = time.time()
+        if now - _GEOIP_TRY_AT.get(client_uuid, 0) < 3600:
+            return
+        _GEOIP_TRY_AT[client_uuid] = now
+        ip = _request_public_ip()
+        if not ip:
+            return
+
+        def _run():
+            try:
+                code = _geoip_lookup(ip)
+                if not code:
+                    return
+                c = store.get_client(client_uuid)
+                # 再次确认仍为空才写入，避免覆盖用户手动设置
+                if c and not (c.get("region") or "").strip():
+                    store.update_client(client_uuid, {"region": code})
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
+
     @app.route("/api/agent/report", methods=["POST"])
     def agent_report():
         client = _agent_auth()
         if not client:
             return jsonify({"error": "unauthorized"}), 401
+        # region 为空时自动 GeoIP 填充国家代码（主题据此显示国旗），手动设置过的不覆盖
+        if not (client.get("region") or "").strip():
+            _maybe_geoip_region(client["uuid"])
         data = request.get_json(force=True, silent=True) or {}
         rep = data.get("report", data)
         cpu = rep.get("cpu", {})
