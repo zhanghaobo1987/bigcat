@@ -111,8 +111,10 @@ class Storage:
                 "notify_template": "【{event}】{message}",
                 "expiry_remind_enabled": "1",
                 "expiry_remind_days": "10",
+                "active_theme": "default",
+                "admin_skin": '{"mode": "dark", "accent": "#2f81f7"}',
             }
-            for k, v in defaults.items():
+            for k, v in self._default_settings().items():
                 cur.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (k, v))
             self._conn.commit()
             # ---- v3 tables (Komari-parity admin) ----
@@ -194,6 +196,15 @@ class Storage:
                 """
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_exec_client ON exec_tasks(client_uuid)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS theme_settings (
+                    short      TEXT PRIMARY KEY,
+                    data       TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             self._conn.commit()
         self._migrate()
 
@@ -384,6 +395,139 @@ class Storage:
             "private_site": False,
             "allow_register": False,
         }
+
+    # ------------------------------------------------------- theme settings
+    def get_theme_settings(self, short: str) -> dict:
+        import json as _json
+        from datetime import datetime as _dt
+
+        cur = self._conn.cursor()
+        cur.execute("SELECT data FROM theme_settings WHERE short=?", (short,))
+        row = cur.fetchone()
+        if not row:
+            return {}
+        try:
+            return _json.loads(row[0]) or {}
+        except Exception:
+            return {}
+
+    def set_theme_settings(self, short: str, data: dict):
+        import json as _json
+        from datetime import datetime as _dt
+
+        now = _dt.now().isoformat(timespec="seconds")
+        self._conn.execute(
+            "INSERT INTO theme_settings(short, data, updated_at) VALUES(?, ?, ?) "
+            "ON CONFLICT(short) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+            (short, _json.dumps(data, ensure_ascii=False), now),
+        )
+        self._conn.commit()
+
+    @staticmethod
+    def _default_settings() -> dict:
+        return {
+            "sitename": "bigcat Monitor",
+            "description": "A lightweight VPS monitor, Komari-compatible.",
+            "theme": "LuminaPlus",
+            "admin_password": "",  # set on first run via CLI
+            "notify_template": "【{event}】{message}",
+            "expiry_remind_enabled": "1",
+            "expiry_remind_days": "10",
+            "active_theme": "default",
+            "admin_skin": '{"mode": "dark", "accent": "#2f81f7"}',
+        }
+
+    # ------------------------------------------------------- config backup
+    def export_config(self) -> dict:
+        """导出全部配置数据（不含监控历史、事件日志、会话）。"""
+        with self._lock:
+            settings = {r["key"]: r["value"]
+                        for r in self._conn.execute("SELECT key, value FROM settings")}
+            theme_settings = {r["short"]: r["data"]
+                              for r in self._conn.execute("SELECT short, data FROM theme_settings")}
+            ping_tasks = [dict(r) for r in
+                          self._conn.execute("SELECT * FROM ping_tasks ORDER BY id ASC")]
+            alert_rules = [dict(r) for r in
+                           self._conn.execute("SELECT * FROM alert_rules ORDER BY id ASC")]
+            clients = [self._row_to_client(r) for r in
+                       self._conn.execute("SELECT * FROM clients ORDER BY created_at ASC")]
+        for c in clients:
+            c.pop("last_report_at", None)
+        return {"settings": settings, "theme_settings": theme_settings,
+                "ping_tasks": ping_tasks, "alert_rules": alert_rules, "clients": clients}
+
+    def import_config(self, data: dict):
+        """用备份数据整体替换配置（事务）。缺失的设置键用默认值补齐。"""
+        if not isinstance(data, dict):
+            raise ValueError("backup must be an object")
+        settings = data.get("settings") or {}
+        theme_settings = data.get("theme_settings") or {}
+        ping_tasks = data.get("ping_tasks") or []
+        alert_rules = data.get("alert_rules") or []
+        clients = data.get("clients") or []
+        if not isinstance(settings, dict) or not isinstance(theme_settings, dict):
+            raise ValueError("bad settings section")
+        if not isinstance(ping_tasks, list) or not isinstance(alert_rules, list) \
+                or not isinstance(clients, list):
+            raise ValueError("bad list section")
+        import time as _time
+        now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+        client_cols = ("uuid", "token", "name", "cpu_name", "virtualization", "arch",
+                       "cpu_cores", "os", "kernel_version", "gpu_name", "ipv4", "ipv6",
+                       "region", "remark", "public_remark", "mem_total", "swap_total",
+                       "disk_total", "version", "weight", "price", "billing_cycle",
+                       "auto_renewal", "currency", "expired_at", "group_name", "tags",
+                       "hidden", "traffic_limit", "created_at", "updated_at")
+        with self._lock:
+            cur = self._conn
+            cur.execute("BEGIN")
+            try:
+                cur.execute("DELETE FROM settings")
+                cur.executemany("INSERT INTO settings(key, value) VALUES(?, ?)",
+                                [(str(k), str(v)) for k, v in settings.items()])
+                for k, v in self._default_settings().items():
+                    cur.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (k, v))
+                cur.execute("DELETE FROM theme_settings")
+                cur.executemany(
+                    "INSERT INTO theme_settings(short, data, updated_at) VALUES(?, ?, ?)",
+                    [(str(s), str(d), now) for s, d in theme_settings.items()])
+                cur.execute("DELETE FROM ping_tasks")
+                for t in ping_tasks:
+                    cur.execute(
+                        """INSERT INTO ping_tasks(id, name, target, type, interval_sec, enabled, created_at)
+                           VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                        (t.get("id"), str(t.get("name") or ""), str(t.get("target") or ""),
+                         str(t.get("type") or "tcp"), int(t.get("interval_sec") or 300),
+                         int(t.get("enabled", 1)), str(t.get("created_at") or now)))
+                cur.execute("DELETE FROM alert_rules")
+                for r in alert_rules:
+                    cur.execute(
+                        """INSERT INTO alert_rules(id, name, metric, threshold, ratio, interval_min,
+                                                  enabled, clients, last_fired_at)
+                           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (r.get("id"), str(r.get("name") or ""), str(r.get("metric") or ""),
+                         float(r.get("threshold") or 0), float(r.get("ratio") or 0),
+                         int(r.get("interval_min") or 2), int(r.get("enabled", 1)),
+                         str(r.get("clients") or "[]"), r.get("last_fired_at")))
+                keep = [str(c.get("uuid")) for c in clients if c.get("uuid")]
+                if keep:
+                    cur.execute(
+                        f"DELETE FROM clients WHERE uuid NOT IN ({','.join('?' * len(keep))})", keep)
+                else:
+                    cur.execute("DELETE FROM clients")
+                for c in clients:
+                    if not c.get("uuid"):
+                        continue
+                    row = dict(c)
+                    row["group_name"] = row.pop("group", "")
+                    cur.execute(
+                        f"INSERT OR REPLACE INTO clients({','.join(client_cols)}) "
+                        f"VALUES({','.join('?' * len(client_cols))})",
+                        [row.get(col) for col in client_cols])
+                cur.execute("COMMIT")
+            except Exception:
+                cur.execute("ROLLBACK")
+                raise
 
     # ------------------------------------------------------------------ auth
     def verify_admin(self, password: str, username: str = "") -> bool:

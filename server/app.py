@@ -141,28 +141,72 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     app.config["store"] = store
     app.config["static_dir"] = static_dir
 
+    # ------------------------------------------------------------ themes helpers
+    # 前台主题：兼容 Komari 主题包（zip 根目录含 komari-theme.json，内含 dist/）。
+    # 上传的主题解压到 <db_dir>/themes/<short>/；"default" 为内置主题（static_dir）。
+    import shutil as _shutil
+    import zipfile as _zipfile
+
+    THEMES_DIR = os.path.join(os.path.dirname(os.path.abspath(db_path)), "themes")
+    os.makedirs(THEMES_DIR, exist_ok=True)
+    app.config["themes_dir"] = THEMES_DIR
+
+    _THEME_SHORT_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+    _MAX_THEME_FILES = 10000
+    _MAX_THEME_FILE_SIZE = 128 << 20
+    _MAX_THEME_TOTAL_SIZE = 512 << 20
+
+    def _theme_manifest(short):
+        if not _THEME_SHORT_RE.match(short or ""):
+            return None
+        p = os.path.join(THEMES_DIR, short, "komari-theme.json")
+        try:
+            with open(p, encoding="utf-8") as f:
+                m = json.load(f)
+            if not isinstance(m, dict) or not m.get("name") or not m.get("short"):
+                return None
+            if m.get("short") != short:
+                return None
+            return m
+        except Exception:
+            return None
+
+    def _active_theme_short():
+        s = (store.get_setting("active_theme", "default") or "default").strip()
+        if s != "default" and _theme_manifest(s):
+            return s
+        return "default"
+
+    def _active_theme_dist():
+        s = _active_theme_short()
+        if s != "default":
+            d = os.path.join(THEMES_DIR, s, "dist")
+            if os.path.isfile(os.path.join(d, "index.html")):
+                return d
+        return app.config["static_dir"]
+
     # ------------------------------------------------------------ frontend
     @app.route("/")
     def index():
-        return send_from_directory(app.config["static_dir"], "index.html")
+        return send_from_directory(_active_theme_dist(), "index.html")
 
     @app.route("/assets/<path:p>")
     def assets(p):
-        return send_from_directory(app.config["static_dir"] + "/assets", p)
+        return send_from_directory(_active_theme_dist() + "/assets", p)
 
     @app.route("/images/<path:p>")
     def images(p):
-        return send_from_directory(app.config["static_dir"] + "/images", p)
+        return send_from_directory(_active_theme_dist() + "/images", p)
 
     @app.route("/manifest.json")
     def manifest():
-        return send_from_directory(app.config["static_dir"], "manifest.json")
+        return send_from_directory(_active_theme_dist(), "manifest.json")
 
     @app.route("/favicon.ico")
     def favicon():
         # theme references /favicon.ico; fall back to a logo svg if missing
         try:
-            return send_from_directory(app.config["static_dir"], "favicon.ico")
+            return send_from_directory(_active_theme_dist(), "favicon.ico")
         except Exception:
             return send_from_directory(
                 app.config["static_dir"] + "/images/logo", "linux.svg"
@@ -609,13 +653,20 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return [_public_node(c) for c in clients if not c.get("hidden")]
 
     def rpc_get_public_settings(params):
-        return store.get_public_settings()
+        out = store.get_public_settings()
+        # Komari 兼容：theme 为当前主题 short，附带该主题的公开设置
+        active = _active_theme_short()
+        out["theme"] = active
+        out["theme_settings"] = store.get_theme_settings(active)
+        return out
 
     def rpc_get_version(params):
         return {"version": VERSION, "hash": VERSION_HASH}
 
     def rpc_get_me(params):
-        return {"username": "Guest", "logged_in": False}
+        if _admin_logged_in():
+            return {"username": store.get_admin_username(), "logged_in": True, "uuid": ""}
+        return {"username": "Guest", "logged_in": False, "uuid": ""}
 
     def rpc_list_metric_definitions(params):
         return [
@@ -709,6 +760,48 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def rpc_get_public_ping_tasks(params):
         return []
 
+    def _ping_records_payload(uuid="", task_id="", hours="4"):
+        """Komari 形状的延迟记录：{count, records[{task_id,time,value,client}], tasks}。
+        bigcat 的延迟探测是主控主动探测，不按节点区分；uuid 查询时仅返回
+        探测目标与该节点 IP 匹配的任务，没有匹配则返回空。"""
+        try:
+            h = max(1, min(720, int(hours)))
+        except (TypeError, ValueError):
+            h = 4
+        since = (datetime.now(timezone.utc) - timedelta(hours=h)).isoformat()
+        tasks = store.list_ping_tasks()
+        if task_id:
+            try:
+                tid = int(task_id)
+            except (TypeError, ValueError):
+                return {"count": 0, "records": [], "tasks": []}
+            tasks = [t for t in tasks if t.get("id") == tid]
+        elif uuid:
+            node = next((c for c in store.list_clients() if c.get("uuid") == uuid), None)
+            if node is None:
+                tasks = []
+            else:
+                ips = {str(node.get("ipv4") or ""), str(node.get("ipv6") or "")} - {""}
+                tasks = [t for t in tasks
+                         if any(ip and ip in str(t.get("target") or "") for ip in ips)]
+        records = []
+        for t in tasks:
+            for r in store.ping_results(t.get("id"), since, limit=2000):
+                ok = bool(r.get("ok"))
+                lat = r.get("latency_ms")
+                records.append({
+                    "task_id": t.get("id"),
+                    "time": r.get("time"),
+                    "value": int(round(lat)) if (ok and lat is not None) else -1,
+                })
+        records.sort(key=lambda r: r.get("time") or "")
+        return {
+            "count": len(records),
+            "records": records,
+            "tasks": [{"id": t.get("id"), "name": t.get("name"),
+                       "target": t.get("target"), "type": t.get("type")} for t in tasks],
+        }
+
     def rpc_get_ping_metric_stats(params):
         now = datetime.now(timezone.utc)
         params = params or {}
@@ -718,7 +811,11 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return {"start": _iso(start), "end": _iso(end), "stats": [], "count": 0}
 
     def rpc_get_ping_records(params):
-        return []
+        return _ping_records_payload(
+            uuid=str(params.get("uuid", "") or ""),
+            task_id=str(params.get("task_id", "") or ""),
+            hours=str(params.get("hours", "4") or "4"),
+        )
 
     RPC_METHODS = {
         "public:getNodesInformation": rpc_get_nodes_information,
@@ -809,6 +906,27 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def api_me():
         return jsonify(rpc_get_me({}))
 
+    # ------------------------------------------------------------ Komari 兼容补齐
+    # 主题可选功能：IP 信息插件（bigcat 未内置 GeoIP，返回未启用，主题会优雅降级）
+    @app.route("/api/public/ip-info/v1/status")
+    def api_ipinfo_status():
+        return jsonify({"ok": True, "data": {
+            "available": False,
+            "version": "none",
+            "schema_version": 1,
+            "mainland_china_excluded": False,
+            "capabilities": {"geo": False, "network": False, "reputation": False,
+                             "media_unlock": False, "ai_unlock": False},
+        }})
+
+    @app.route("/api/public/ip-info/v1/lookup")
+    def api_ipinfo_lookup():
+        return jsonify({"ok": False, "message": "IP 信息功能未启用"}), 503
+
+    @app.route("/api/public/ip-info/v1/latency")
+    def api_ipinfo_latency():
+        return jsonify({"ok": False, "message": "IP 信息功能未启用"}), 503
+
     @app.route("/api/recent/<client_uuid>")
     def api_recent(client_uuid):
         return jsonify(rpc_get_client_recent_records({"uuid": client_uuid}))
@@ -819,6 +937,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             "uuid": request.args.get("uuid", ""),
             "hours": request.args.get("hours", "4"),
         }))
+
+    @app.route("/api/records/ping")
+    def api_records_ping():
+        return jsonify(_ping_records_payload(
+            uuid=request.args.get("uuid", ""),
+            task_id=request.args.get("task_id", ""),
+            hours=request.args.get("hours", "4"),
+        ))
 
     # ------------------------------------------------------------ agent API
     def _agent_auth():
@@ -1015,6 +1141,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         store.log_event("info", "auth",
                         f"管理员登录成功（IP {request.remote_addr or '-'}）")
         return sid
+
+    def _admin_logged_in() -> bool:
+        sid = session.get("sid")
+        s = store.get_session(sid) if sid else None
+        if not s or session.get("v") != _session_version():
+            return False
+        exp = _parse_time(s.get("expires_at"))
+        return bool(exp and exp >= datetime.now(timezone.utc))
 
     def _require_admin(fn):
         @functools.wraps(fn)
@@ -1730,6 +1864,300 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                         f"数据库压缩完成：{res['before']} → {res['after']} 字节")
         return jsonify({"ok": True, **res})
 
+    # ============================================================ theme & skin
+    def _theme_info(short, manifest=None):
+        m = manifest or _theme_manifest(short) or {}
+        return {
+            "name": m.get("name", short),
+            "short": short,
+            "description": m.get("description", ""),
+            "version": m.get("version", ""),
+            "author": m.get("author", ""),
+            "url": m.get("url", ""),
+            "preview": m.get("preview", ""),
+        }
+
+    def _install_theme_zip(data: bytes):
+        """校验并解压主题 zip，返回主题信息；失败 raise ValueError(msg)。"""
+        import io as _io
+        try:
+            zf = _zipfile.ZipFile(_io.BytesIO(data))
+        except Exception:
+            raise ValueError("不是有效的 ZIP 文件")
+        names = zf.namelist()
+        if len(names) > _MAX_THEME_FILES:
+            raise ValueError("主题文件数量超限")
+        total = 0
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            if info.file_size > _MAX_THEME_FILE_SIZE:
+                raise ValueError(f"主题文件 {info.filename} 超过大小限制")
+            total += info.file_size
+            if total > _MAX_THEME_TOTAL_SIZE:
+                raise ValueError("主题解压后总大小超限")
+        if "komari-theme.json" not in names:
+            raise ValueError("缺少 komari-theme.json（需放在压缩包根目录）")
+        try:
+            manifest = json.loads(zf.read("komari-theme.json").decode("utf-8"))
+        except Exception:
+            raise ValueError("komari-theme.json 不是有效的 JSON")
+        name = str(manifest.get("name") or "").strip()
+        short = str(manifest.get("short") or "").strip()
+        if not name or not short:
+            raise ValueError("komari-theme.json 缺少必填字段 name / short")
+        if short == "default" or not _THEME_SHORT_RE.match(short):
+            raise ValueError("short 无效（仅允许字母、数字、下划线、连字符，且不能为 default）")
+        if "dist/index.html" not in names:
+            raise ValueError("主题包内缺少 dist/index.html")
+        dest = os.path.join(THEMES_DIR, short)
+        base = os.path.realpath(dest)
+        if os.path.isdir(dest):
+            _shutil.rmtree(dest)
+        os.makedirs(dest, exist_ok=True)
+        try:
+            for info in zf.infolist():
+                rel = info.filename.replace("\\", "/")
+                target = os.path.realpath(os.path.join(dest, rel))
+                if target != base and not target.startswith(base + os.sep):
+                    continue  # 路径穿越，跳过
+                if info.is_dir():
+                    os.makedirs(target, exist_ok=True)
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(info) as src, open(target, "wb") as out:
+                    _shutil.copyfileobj(src, out)
+        except Exception as e:
+            _shutil.rmtree(dest, ignore_errors=True)
+            raise ValueError(f"解压主题失败: {e}")
+        return _theme_info(short, manifest)
+
+    def _download_theme(url: str) -> bytes:
+        m = re.match(r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+        if m:
+            owner, repo = m.group(1), m.group(2)
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{owner}/{repo}/releases/latest",
+                headers={"User-Agent": "bigcat", "Accept": "application/vnd.github+json"})
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    rel = json.loads(r.read().decode("utf-8"))
+            except Exception as e:
+                raise ValueError(f"获取 GitHub release 失败: {e}")
+            zip_url = next((a.get("browser_download_url") for a in (rel.get("assets") or [])
+                            if str(a.get("name") or "").lower().endswith(".zip")), None)
+            if not zip_url:
+                raise ValueError("该仓库最新 release 中没有 zip 资源")
+            url = zip_url
+        req = urllib.request.Request(url, headers={"User-Agent": "bigcat"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = r.read(_MAX_THEME_TOTAL_SIZE + 1)
+        except Exception as e:
+            raise ValueError(f"下载主题失败: {e}")
+        if len(data) > _MAX_THEME_TOTAL_SIZE:
+            raise ValueError("主题文件过大")
+        return data
+
+    @app.route("/api/admin/theme/list")
+    @_require_admin
+    def admin_theme_list():
+        active = _active_theme_short()
+        themes = [{
+            "name": "默认主题（内置 LuminaPlus）", "short": "default",
+            "description": "bigcat 内置前台主题", "version": VERSION,
+            "author": "bigcat", "url": "", "preview": "",
+            "active": active == "default",
+        }]
+        try:
+            entries = sorted(os.listdir(THEMES_DIR))
+        except Exception:
+            entries = []
+        for e in entries:
+            m = _theme_manifest(e)
+            if not m:
+                continue
+            info = _theme_info(e, m)
+            info["active"] = (e == active)
+            themes.append(info)
+        return jsonify({"themes": themes, "active": active})
+
+    @app.route("/api/admin/theme/upload", methods=["POST"])
+    @_require_admin
+    def admin_theme_upload():
+        f = request.files.get("file")
+        if not f:
+            return jsonify({"error": "请选择主题 zip 文件"}), 400
+        data = f.read()
+        if len(data) > _MAX_THEME_TOTAL_SIZE:
+            return jsonify({"error": "文件过大"}), 400
+        try:
+            info = _install_theme_zip(data)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"ok": True, "theme": info})
+
+    @app.route("/api/admin/theme/import", methods=["POST"])
+    @_require_admin
+    def admin_theme_import():
+        body = request.get_json(force=True, silent=True) or {}
+        url = (body.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            return jsonify({"error": "请输入 http(s) 链接"}), 400
+        try:
+            data = _download_theme(url)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        try:
+            info = _install_theme_zip(data)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"ok": True, "theme": info})
+
+    @app.route("/api/admin/theme/set")
+    @_require_admin
+    def admin_theme_set():
+        short = (request.args.get("theme") or "").strip()
+        if short != "default" and not _theme_manifest(short):
+            return jsonify({"error": "主题不存在"}), 404
+        store.set_setting("active_theme", short)
+        return jsonify({"ok": True, "theme": short})
+
+    @app.route("/api/admin/theme/delete", methods=["POST"])
+    @_require_admin
+    def admin_theme_delete():
+        body = request.get_json(force=True, silent=True) or {}
+        short = (body.get("short") or "").strip()
+        if short == "default" or not _THEME_SHORT_RE.match(short):
+            return jsonify({"error": "不能删除该主题"}), 400
+        if _active_theme_short() == short:
+            return jsonify({"error": "该主题正在使用中，请先切换到其他主题"}), 400
+        d = os.path.join(THEMES_DIR, short)
+        if not os.path.isdir(d) or not _theme_manifest(short):
+            return jsonify({"error": "主题不存在"}), 404
+        _shutil.rmtree(d, ignore_errors=True)
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/theme/settings", methods=["GET", "POST"])
+    @_require_admin
+    def admin_theme_settings():
+        body = request.get_json(force=True, silent=True) if request.method == "POST" else {}
+        short = ((request.args.get("theme") or (body or {}).get("theme")
+                  or _active_theme_short()) or "").strip()
+        if request.method == "GET":
+            return jsonify({"theme": short, "settings": store.get_theme_settings(short)})
+        if not isinstance(body, dict):
+            return jsonify({"error": "设置必须为 JSON 对象"}), 400
+        body = {k: v for k, v in body.items() if k != "theme"}
+        store.set_theme_settings(short, body)
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/theme/preview/<short>")
+    @_require_admin
+    def admin_theme_preview(short):
+        m = _theme_manifest(short)
+        if not m:
+            return jsonify({"error": "主题不存在"}), 404
+        rel = str(m.get("preview") or "").replace("\\", "/").lstrip("/")
+        if not rel or ".." in rel:
+            return jsonify({"error": "无预览图"}), 404
+        return send_from_directory(os.path.join(THEMES_DIR, short), rel)
+
+    # ------------------------------------------------------------ admin skin
+    @app.route("/api/admin/ip-info/v1/refresh", methods=["POST"])
+    @_require_admin
+    def api_ipinfo_refresh():
+        return jsonify({"ok": False, "message": "IP 信息功能未启用"}), 503
+
+    @app.route("/api/admin/ping")
+    @_require_admin
+    def api_admin_ping():
+        # 主题期望裸数组 [{id, interval, name, loss, clients, type, target, weight}]
+        tasks = store.list_ping_tasks() if hasattr(store, "list_ping_tasks") else []
+        return jsonify([{
+            "id": t.get("id"), "interval": t.get("interval_sec") or 60,
+            "name": t.get("name") or "", "loss": 0, "clients": [],
+            "type": t.get("type") or "icmp", "target": t.get("target") or "",
+            "weight": 0,
+        } for t in tasks])
+
+    @app.route("/api/admin/client/list")
+    @_require_admin
+    def api_admin_client_list():
+        # 主题期望裸数组 [{uuid, name, group, region, weight}]
+        return jsonify([{
+            "uuid": c.get("uuid"), "name": c.get("name") or "",
+            "group": c.get("group") or "", "region": c.get("region") or "",
+            "weight": c.get("weight") or 0,
+        } for c in store.list_clients()])
+
+    _SKIN_ACCENT_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+    def _get_skin():
+        try:
+            skin = json.loads(store.get_setting("admin_skin", "") or "")
+        except Exception:
+            skin = {}
+        mode = skin.get("mode") if skin.get("mode") in ("dark", "light") else "dark"
+        accent = skin.get("accent")
+        if not _SKIN_ACCENT_RE.match(str(accent or "")):
+            accent = "#2f81f7"
+        return {"mode": mode, "accent": accent}
+
+    @app.route("/api/admin/skin", methods=["GET", "PUT"])
+    @_require_admin
+    def admin_skin():
+        if request.method == "GET":
+            return jsonify(_get_skin())
+        body = request.get_json(force=True, silent=True) or {}
+        mode = body.get("mode") if body.get("mode") in ("dark", "light") else "dark"
+        accent = str(body.get("accent") or "")
+        if not _SKIN_ACCENT_RE.match(accent):
+            return jsonify({"error": "强调色格式无效（需 #rrggbb）"}), 400
+        skin = {"mode": mode, "accent": accent}
+        store.set_setting("admin_skin", json.dumps(skin))
+        return jsonify({"ok": True, "skin": skin})
+
+    # ------------------------------------------------------------ 配置备份与恢复
+    @app.route("/api/admin/backup", methods=["GET"])
+    @_require_admin
+    def admin_backup_download():
+        payload = {
+            "format": "bigcat-backup",
+            "version": 1,
+            "app_version": VERSION,
+            "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "data": store.export_config(),
+        }
+        body = json.dumps(payload, ensure_ascii=False)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        resp = app.response_class(body, mimetype="application/json")
+        resp.headers["Content-Disposition"] = f"attachment; filename=bigcat-backup-{stamp}.json"
+        return resp
+
+    @app.route("/api/admin/backup/restore", methods=["POST"])
+    @_require_admin
+    def admin_backup_restore():
+        f = request.files.get("backup")
+        if f is None:
+            return jsonify({"error": "请上传备份文件（字段名 backup）"}), 400
+        raw = f.read(64 * 1024 * 1024 + 1)
+        if len(raw) > 64 * 1024 * 1024:
+            return jsonify({"error": "备份文件过大（上限 64MB）"}), 400
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return jsonify({"error": "备份文件不是有效的 JSON"}), 400
+        if not isinstance(payload, dict) or payload.get("format") != "bigcat-backup":
+            return jsonify({"error": "不是有效的 bigcat 备份文件"}), 400
+        try:
+            store.import_config(payload.get("data") or {})
+        except ValueError as e:
+            return jsonify({"error": f"备份数据无效：{e}"}), 400
+        except Exception as e:
+            return jsonify({"error": f"恢复失败：{e}"}), 500
+        return jsonify({"ok": True})
+
     # ============================================================ v3 API end
 
     # ------------------------------------------------------------ SPA fallback
@@ -1739,7 +2167,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def spa_fallback(p):
         if p.startswith("api/"):
             return jsonify({"error": "not found"}), 404
-        return send_from_directory(app.config["static_dir"], "index.html")
+        return send_from_directory(_active_theme_dist(), "index.html")
 
     # 后台监控线程：离线检测 / 告警 / 延迟监测 / 到期提醒 / 流量报告。
     # enable_monitor=False 时（单元测试）不启动。

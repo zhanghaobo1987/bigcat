@@ -7,6 +7,25 @@
 <style>
   :root { --bg:#0b0f14; --card:#131a23; --border:#232d3a; --text:#e6edf3;
           --muted:#8b98a9; --accent:#2f81f7; --danger:#f85149; --ok:#3fb950; --warn:#d29922; }
+  [data-skin-mode="light"] { --bg:#eef2f7; --card:#ffffff; --border:#dbe3ec; --text:#1c2733;
+          --muted:#64748b; --accent:#2f81f7; --danger:#d64545; --ok:#2f9e44; --warn:#b7791f; }
+  [data-skin-mode="light"] aside { background:#e6ecf4; }
+  [data-skin-mode="light"] aside nav button:hover { background:#dbe4ef; color:var(--text); }
+  [data-skin-mode="light"] aside nav button.active { background:#d5e4fb; }
+  [data-skin-mode="light"] input, [data-skin-mode="light"] select, [data-skin-mode="light"] textarea { background:#f7fafc; }
+  .brand { text-decoration:none; color:inherit; display:block; }
+  .brand h1 { cursor:pointer; }
+  .brand:hover h1 { color:var(--accent); }
+  .theme-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:16px; }
+  .theme-card { border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--card); }
+  .theme-card img { width:100%; height:140px; object-fit:cover; background:#0d131b; display:block; }
+  .theme-card .tbody { padding:12px; }
+  .theme-card .tmeta { font-size:12px; color:var(--muted); margin:4px 0 10px; }
+  .badge-active { display:inline-block; font-size:11px; background:var(--ok); color:#fff;
+                  border-radius:10px; padding:1px 8px; margin-left:6px; vertical-align:2px; }
+  .swatch { width:34px; height:34px; border-radius:50%; border:3px solid transparent;
+            cursor:pointer; display:inline-block; margin:0 8px 8px 0; padding:0; }
+  .swatch.sel { border-color:var(--text); }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
@@ -134,7 +153,7 @@
 <!-- 主界面 -->
 <div id="view-main" class="layout hidden">
   <aside>
-    <h1>🐱 bigcat</h1>
+    <a class="brand" href="/" title="打开前台监控页"><h1>🐱 bigcat</h1></a>
     <p class="ver" id="side-ver"></p>
     <nav id="nav"></nav>
     <div style="margin-top:16px;padding:0 8px">
@@ -352,6 +371,16 @@
         <div class="ok" id="vacuum-ok"></div>
         <button id="btn-vacuum">开始压缩</button>
       </div>
+      <div class="card">
+        <h2>配置备份与恢复</h2>
+        <p class="muted">备份包含：站点设置、主题设置、延迟探测任务、告警规则、主机配置（含 Agent Token）。不包含监控历史、事件日志和登录会话。备份文件含敏感信息（管理员密码、Token），请妥善保管。</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button id="btn-backup-download">下载备份</button>
+          <input type="file" id="backup-file" accept=".json,application/json" style="max-width:240px">
+          <button id="btn-backup-restore" class="ghost">上传恢复</button>
+        </div>
+        <div class="ok" id="backup-ok"></div><div class="err" id="backup-err"></div>
+      </div>
     </section>
 
     <section id="page-sessions" class="page hidden">
@@ -394,6 +423,51 @@
         <input id="set-offline-th" type="number" min="30" max="3600" step="10">
         <div class="ok" id="settings-ok"></div><div class="err" id="settings-err"></div>
         <button id="btn-save-settings" style="margin-top:12px">保存</button>
+      </div>
+    </section>
+
+    <section id="page-themes" class="page hidden">
+      <div class="card">
+        <h2>主题管理</h2>
+        <p class="muted">上传 Komari 主题包（.zip，根目录需包含 komari-theme.json），启用后前台立刻切换。也支持从链接导入（直接 zip 地址或 GitHub 仓库地址）。</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="file" id="theme-file" accept=".zip" style="max-width:240px">
+          <button id="btn-theme-upload">上传安装</button>
+          <input id="theme-url" type="text" placeholder="主题 zip 链接或 GitHub 仓库地址" style="flex:1;min-width:200px">
+          <button id="btn-theme-import" class="ghost">从链接导入</button>
+        </div>
+        <div class="ok" id="themes-ok"></div><div class="err" id="themes-err"></div>
+      </div>
+      <div class="card">
+        <h2>已安装主题</h2>
+        <div class="theme-grid" id="theme-grid"></div>
+      </div>
+      <div class="card hidden" id="theme-settings-card">
+        <h2>主题设置 <span class="muted" id="theme-settings-name"></span></h2>
+        <p class="muted">JSON 格式，保存后前台主题即时生效（主题自带的设置页同样可用）。</p>
+        <textarea id="theme-settings-json" rows="8" style="width:100%;font-family:monospace"></textarea>
+        <div class="ok" id="theme-settings-ok"></div><div class="err" id="theme-settings-err"></div>
+        <button id="btn-theme-settings-save" style="margin-top:8px">保存主题设置</button>
+      </div>
+    </section>
+
+    <section id="page-skin" class="page hidden">
+      <div class="card">
+        <h2>外观皮肤</h2>
+        <p class="muted">自定义后台管理页面的配色，保存后立即生效。</p>
+        <label>模式</label>
+        <div>
+          <label style="display:inline;margin-right:20px"><input type="radio" name="skin-mode" value="dark"> 深色</label>
+          <label style="display:inline"><input type="radio" name="skin-mode" value="light"> 浅色</label>
+        </div>
+        <label style="margin-top:14px">强调色</label>
+        <div id="skin-swatches"></div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:2px">
+          <input type="color" id="skin-accent" value="#2f81f7" style="width:46px;height:34px;padding:2px">
+          <span class="muted" id="skin-accent-val">#2f81f7</span>
+        </div>
+        <div class="ok" id="skin-ok"></div><div class="err" id="skin-err"></div>
+        <button id="btn-save-skin" style="margin-top:12px">保存外观</button>
       </div>
     </section>
 
@@ -600,12 +674,14 @@ document.querySelectorAll('.modal-bg').forEach(m =>
 /* ---------------- 菜单 ---------------- */
 const PAGES = [
   ['dashboard', '📊', '仪表板'], ['servers', '🖥️', '服务器'],
+  ['themes', '🎨', '主题管理'],
   ['ping', '📡', '延迟监测'], ['alerts', '🚨', '告警规则'],
   ['exec', '⌨️', '远程执行'],
   ['notify', '🔔', '通知'], ['events', '📝', '事件日志'],
   ['database', '💾', '数据库'],
   ['sessions', '👥', '会话管理'], ['account', '👤', '账户'],
-  ['settings', '⚙️', '设置'], ['logs', '📜', '系统日志'], ['about', 'ℹ️', '关于'],
+  ['settings', '⚙️', '设置'], ['skin', '💅', '外观皮肤'],
+  ['logs', '📜', '系统日志'], ['about', 'ℹ️', '关于'],
 ];
 let curPage = 'dashboard';
 function buildNav() {
@@ -683,6 +759,7 @@ $('btn-logout').onclick = async () => { await api('/api/admin/logout', 'POST'); 
 function enterMain(data) {
   show('view-main');
   buildNav(); go('dashboard');
+  loadSkin();
 }
 
 /* ---------------- 仪表板 ---------------- */
@@ -1245,6 +1322,38 @@ $('btn-vacuum').onclick = async () => {
   } else $('vacuum-ok').textContent = '压缩失败';
 };
 
+/* ---------------- 配置备份与恢复 ---------------- */
+$('btn-backup-download').onclick = async () => {
+  $('backup-ok').textContent = ''; $('backup-err').textContent = '';
+  const r = await fetch('/api/admin/backup', {credentials: 'same-origin'});
+  if (r.status === 401) return needLogin();
+  if (!r.ok) { $('backup-err').textContent = '下载失败'; return; }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'bigcat-backup-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  $('backup-ok').textContent = '备份已下载';
+};
+$('btn-backup-restore').onclick = async () => {
+  $('backup-ok').textContent = ''; $('backup-err').textContent = '';
+  const f = $('backup-file').files[0];
+  if (!f) { $('backup-err').textContent = '请先选择备份文件'; return; }
+  if (!confirm('确定用该备份覆盖当前全部配置吗？此操作不可撤销。')) return;
+  const fd = new FormData();
+  fd.append('backup', f);
+  const r = await fetch('/api/admin/backup/restore', {method: 'POST', credentials: 'same-origin', body: fd});
+  let d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (r.status === 401) return needLogin();
+  if (r.ok && d.ok) {
+    $('backup-ok').textContent = '恢复成功，配置已生效';
+    $('backup-file').value = '';
+    loadSkin();
+  } else $('backup-err').textContent = (d && d.error) || '恢复失败';
+};
+
 /* ---------------- 会话 ---------------- */
 async function loadSessions() {
   const {status, data} = await api('/api/admin/sessions');
@@ -1344,6 +1453,136 @@ $('btn-save-settings').onclick = async () => {
   if (status === 200 && data.ok) $('settings-ok').textContent = '已保存';
   else $('settings-err').textContent = '保存失败';
 };
+
+/* ---------------- 外观皮肤 ---------------- */
+const SKIN_ACCENTS = ['#2f81f7', '#3fb950', '#a371f7', '#d29922', '#f85149', '#db61a2', '#39c5cf', '#6e7681'];
+function applySkin(skin) {
+  skin = skin || {};
+  const mode = skin.mode === 'light' ? 'light' : 'dark';
+  const accent = /^#[0-9a-fA-F]{6}$/.test(skin.accent || '') ? skin.accent : '#2f81f7';
+  document.documentElement.dataset.skinMode = mode;
+  document.documentElement.style.setProperty('--accent', accent);
+  try { localStorage.setItem('bigcat-skin', JSON.stringify({mode, accent})); } catch(e) {}
+  return {mode, accent};
+}
+try {
+  const cached = JSON.parse(localStorage.getItem('bigcat-skin') || 'null');
+  if (cached) applySkin(cached);
+} catch(e) {}
+function buildSwatches(cur) {
+  cur = String(cur || '').toLowerCase();
+  $('skin-swatches').innerHTML = SKIN_ACCENTS.map(c =>
+    `<button class="swatch${c === cur ? ' sel' : ''}" data-c="${c}" style="background:${c}" title="${c}"></button>`).join('');
+  document.querySelectorAll('#skin-swatches .swatch').forEach(b => {
+    b.onclick = () => { $('skin-accent').value = b.dataset.c; $('skin-accent-val').textContent = b.dataset.c; buildSwatches(b.dataset.c); };
+  });
+}
+async function loadSkin() {
+  const {status, data} = await api('/api/admin/skin');
+  if (status === 401) return needLogin();
+  const skin = applySkin(data);
+  document.querySelectorAll('input[name="skin-mode"]').forEach(r => { r.checked = (r.value === skin.mode); });
+  $('skin-accent').value = skin.accent;
+  $('skin-accent-val').textContent = skin.accent;
+  buildSwatches(skin.accent);
+}
+$('skin-accent').oninput = e => { $('skin-accent-val').textContent = e.target.value; buildSwatches(e.target.value); };
+LOADERS.skin = loadSkin;
+$('btn-save-skin').onclick = async () => {
+  $('skin-ok').textContent = ''; $('skin-err').textContent = '';
+  const checked = document.querySelector('input[name="skin-mode"]:checked');
+  const {status, data} = await api('/api/admin/skin', 'PUT',
+    {mode: checked ? checked.value : 'dark', accent: $('skin-accent').value});
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) { applySkin(data.skin); $('skin-ok').textContent = '已保存，配色已生效'; }
+  else $('skin-err').textContent = (data && data.error) || '保存失败';
+};
+
+/* ---------------- 主题管理 ---------------- */
+let themeSettingsShort = null;
+async function loadThemes() {
+  $('themes-ok').textContent = ''; $('themes-err').textContent = '';
+  const {status, data} = await api('/api/admin/theme/list');
+  if (status === 401) return needLogin();
+  const themes = (data && data.themes) || [];
+  $('theme-grid').innerHTML = themes.map(t => `
+    <div class="theme-card">
+      ${(t.preview && t.short !== 'default')
+        ? `<img src="/api/admin/theme/preview/${encodeURIComponent(t.short)}" alt="">`
+        : `<div style="height:140px;display:flex;align-items:center;justify-content:center;font-size:42px;background:#0d131b">🎨</div>`}
+      <div class="tbody">
+        <div><b>${esc(t.name)}</b>${t.active ? '<span class="badge-active">使用中</span>' : ''}</div>
+        <div class="tmeta">${esc(t.version || '')} ${esc(t.author || '')}<br>${esc(t.description || '')}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${t.active ? '' : `<button class="small" data-act="set" data-s="${esc(t.short)}">启用</button>`}
+          <button class="small ghost" data-act="settings" data-s="${esc(t.short)}">设置</button>
+          ${t.short === 'default' ? '' : `<button class="small ghost" data-act="del" data-s="${esc(t.short)}">删除</button>`}
+        </div>
+      </div>
+    </div>`).join('') || '<p class="muted">暂无主题</p>';
+  document.querySelectorAll('#theme-grid button').forEach(b => {
+    const s = b.dataset.s;
+    if (b.dataset.act === 'set') b.onclick = () => setTheme(s);
+    if (b.dataset.act === 'del') b.onclick = () => delTheme(s);
+    if (b.dataset.act === 'settings') b.onclick = () => openThemeSettings(s);
+  });
+}
+async function setTheme(short) {
+  const {status, data} = await api('/api/admin/theme/set?theme=' + encodeURIComponent(short));
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) { $('themes-ok').textContent = '已启用，刷新前台即可看到新主题'; loadThemes(); }
+  else $('themes-err').textContent = (data && data.error) || '启用失败';
+}
+async function delTheme(short) {
+  if (!confirm('确定删除主题「' + short + '」？')) return;
+  const {status, data} = await api('/api/admin/theme/delete', 'POST', {short});
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) { $('themes-ok').textContent = '已删除'; loadThemes(); }
+  else $('themes-err').textContent = (data && data.error) || '删除失败';
+}
+async function openThemeSettings(short) {
+  themeSettingsShort = short;
+  $('theme-settings-card').classList.remove('hidden');
+  $('theme-settings-name').textContent = '（' + short + '）';
+  $('theme-settings-ok').textContent = ''; $('theme-settings-err').textContent = '';
+  const {status, data} = await api('/api/admin/theme/settings?theme=' + encodeURIComponent(short));
+  if (status === 401) return needLogin();
+  $('theme-settings-json').value = JSON.stringify((data && data.settings) || {}, null, 2);
+  $('theme-settings-card').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+$('btn-theme-settings-save').onclick = async () => {
+  $('theme-settings-ok').textContent = ''; $('theme-settings-err').textContent = '';
+  let obj;
+  try { obj = JSON.parse($('theme-settings-json').value || '{}'); }
+  catch(e) { $('theme-settings-err').textContent = 'JSON 格式错误：' + e.message; return; }
+  const {status, data} = await api('/api/admin/theme/settings?theme=' + encodeURIComponent(themeSettingsShort || ''), 'POST', obj);
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) $('theme-settings-ok').textContent = '已保存';
+  else $('theme-settings-err').textContent = (data && data.error) || '保存失败';
+};
+$('btn-theme-upload').onclick = async () => {
+  $('themes-ok').textContent = ''; $('themes-err').textContent = '';
+  const f = $('theme-file').files[0];
+  if (!f) { $('themes-err').textContent = '请先选择主题 zip 文件'; return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  const r = await fetch('/api/admin/theme/upload', {method: 'POST', credentials: 'same-origin', body: fd});
+  let d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (r.status === 401) return needLogin();
+  if (r.status === 200 && d.ok) { $('themes-ok').textContent = '主题「' + (d.theme.name || '') + '」安装成功'; $('theme-file').value = ''; loadThemes(); }
+  else $('themes-err').textContent = (d && d.error) || '上传失败';
+};
+$('btn-theme-import').onclick = async () => {
+  $('themes-ok').textContent = ''; $('themes-err').textContent = '';
+  const url = $('theme-url').value.trim();
+  if (!url) { $('themes-err').textContent = '请输入主题链接'; return; }
+  const {status, data} = await api('/api/admin/theme/import', 'POST', {url});
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) { $('themes-ok').textContent = '主题「' + (data.theme.name || '') + '」导入成功'; $('theme-url').value = ''; loadThemes(); }
+  else $('themes-err').textContent = (data && data.error) || '导入失败';
+};
+LOADERS.themes = loadThemes;
 
 /* ---------------- 系统日志 ---------------- */
 async function loadLogs() {
