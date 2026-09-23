@@ -1,0 +1,14 @@
+[Unit]
+Description=bigcat monitoring server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/bigcat/server
+ExecStart=/usr/bin/python3 app.py --port 25774 --db /opt/bigcat/data/bigcat.db
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
