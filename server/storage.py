@@ -245,6 +245,40 @@ class Storage:
             }.items():
                 if col not in rcols:
                     self._conn.execute(f"ALTER TABLE records ADD COLUMN {col} {ddl}")
+            # v1.9.8: sessions 记录登录用户身份
+            scols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)").fetchall()}
+            for col, ddl in {
+                "username": "TEXT DEFAULT ''",
+                "role": "TEXT DEFAULT ''",
+            }.items():
+                if col not in scols:
+                    self._conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}")
+            # v1.9.8: 多账户体系
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username      TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role          TEXT NOT NULL DEFAULT 'user',
+                    perms         TEXT NOT NULL DEFAULT '[]',
+                    phone         TEXT DEFAULT '',
+                    email         TEXT DEFAULT '',
+                    disabled      INTEGER NOT NULL DEFAULT 0,
+                    created_at    TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recovery_tokens (
+                    token      TEXT PRIMARY KEY,
+                    username   TEXT NOT NULL,
+                    is_super   INTEGER NOT NULL DEFAULT 0,
+                    expires_at TEXT NOT NULL
+                )
+                """
+            )
             self._conn.commit()
 
     # ------------------------------------------------------------------ clients
@@ -612,6 +646,110 @@ class Storage:
     def has_admin(self) -> bool:
         return bool(self.get_setting("admin_password"))
 
+    # ------------------------------------------------------- v1.9.8: 多账户
+    @staticmethod
+    def _hash_pw(password: str) -> str:
+        import hashlib
+
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def create_user(self, username: str, password: str, role: str = "user",
+                    perms: list = None, phone: str = "", email: str = "") -> dict:
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO users(username, password_hash, role, perms, phone, email, disabled, created_at)
+                   VALUES(?, ?, ?, ?, ?, ?, 0, ?)""",
+                (username, self._hash_pw(password), role,
+                 json.dumps(perms or []), phone or "", email or "", now),
+            )
+            self._conn.commit()
+            return self.get_user_by_id(cur.lastrowid)
+
+    def list_users(self) -> list:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d.pop("password_hash", None)
+            out.append(d)
+        return out
+
+    def get_user_by_id(self, uid: int):
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d.pop("password_hash", None)
+        return d
+
+    def get_user_by_username(self, username: str):
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        return dict(row) if row else None
+
+    def verify_user(self, username: str, password: str):
+        """校验普通账户，返回完整行（含 password_hash）或 None。"""
+        u = self.get_user_by_username(username)
+        if not u or u.get("disabled"):
+            return None
+        if u.get("password_hash") != self._hash_pw(password or ""):
+            return None
+        return u
+
+    def update_user(self, uid: int, fields: dict) -> bool:
+        allowed = {"password_hash", "role", "perms", "phone", "email", "disabled", "username"}
+        sets, vals = [], []
+        for k, v in (fields or {}).items():
+            if k in allowed:
+                sets.append(f"{k} = ?")
+                vals.append(v)
+        if not sets:
+            return False
+        vals.append(uid)
+        with self._lock:
+            cur = self._conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", vals)
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def delete_user(self, uid: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def set_user_password(self, uid: int, password: str) -> bool:
+        return self.update_user(uid, {"password_hash": self._hash_pw(password)})
+
+    # ------------------------------------------------------- v1.9.8: 找回密码 token
+    def create_recovery_token(self, username: str, is_super: bool, ttl_sec: int = 900) -> str:
+        import secrets
+
+        token = secrets.token_hex(24)
+        exp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + ttl_sec))
+        with self._lock:
+            self._conn.execute("DELETE FROM recovery_tokens WHERE username = ?", (username,))
+            self._conn.execute(
+                "INSERT INTO recovery_tokens(token, username, is_super, expires_at) VALUES(?, ?, ?, ?)",
+                (token, username, 1 if is_super else 0, exp),
+            )
+            self._conn.commit()
+        return token
+
+    def consume_recovery_token(self, token: str):
+        """校验并一次性消费 token，返回行或 None。"""
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM recovery_tokens WHERE token = ? AND expires_at > ?", (token, now)
+            ).fetchone()
+            if row:
+                self._conn.execute("DELETE FROM recovery_tokens WHERE token = ?", (token,))
+                self._conn.commit()
+        return dict(row) if row else None
+
     # ------------------------------------------------------- v3: ping tasks
     def add_ping_task(self, name, target, type="tcp", interval_sec=300, enabled=1) -> dict:
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -774,14 +912,15 @@ class Storage:
             self._conn.commit()
 
     # ------------------------------------------------------- v3: sessions
-    def create_session(self, sid: str, ip: str, ua: str, ttl_sec: int = 30 * 86400) -> dict:
+    def create_session(self, sid: str, ip: str, ua: str, ttl_sec: int = 30 * 86400,
+                       username: str = "", role: str = "") -> dict:
         now = time.time()
         fmt = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
         with self._lock:
             self._conn.execute(
-                """INSERT INTO sessions(id, ip, ua, created_at, expires_at, last_seen)
-                   VALUES(?, ?, ?, ?, ?, ?)""",
-                (sid, ip, ua[:200], fmt(now), fmt(now + ttl_sec), fmt(now)),
+                """INSERT INTO sessions(id, ip, ua, created_at, expires_at, last_seen, username, role)
+                   VALUES(?, ?, ?, ?, ?, ?, ?, ?)""",
+                (sid, ip, ua[:200], fmt(now), fmt(now + ttl_sec), fmt(now), username or "", role or ""),
             )
             self._conn.commit()
             row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()

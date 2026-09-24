@@ -155,6 +155,41 @@
     </div>
     <div class="err" id="login-err"></div>
     <button id="btn-login" style="width:100%;margin-top:8px">登录</button>
+    <p class="muted" style="text-align:center;margin-top:10px;font-size:13px">
+      <a href="javascript:void(0)" id="link-forgot" style="color:var(--accent)">忘记密码？</a>
+    </p>
+  </div>
+</div>
+
+<!-- 忘记密码 / 找回密码 -->
+<div id="modal-recover" class="modal-bg hidden">
+  <div class="modal" style="max-width:420px">
+    <h2>找回密码</h2>
+    <div id="recover-step1">
+      <p class="muted">输入用户名，系统将根据该账户绑定的手机号 / 邮箱验证身份。</p>
+      <label>用户名</label>
+      <input id="recover-user" type="text" autocomplete="username">
+      <div class="err" id="recover-err1"></div>
+      <button id="btn-recover-next" style="margin-top:8px">下一步</button>
+    </div>
+    <div id="recover-step2" class="hidden">
+      <p class="muted" id="recover-hint"></p>
+      <div id="recover-phone-wrap"><label>手机号</label><input id="recover-phone" type="text" inputmode="tel" autocomplete="tel"></div>
+      <div id="recover-email-wrap"><label>邮箱</label><input id="recover-email" type="text" inputmode="email" autocomplete="email"></div>
+      <div class="err" id="recover-err2"></div>
+      <button id="btn-recover-verify" style="margin-top:8px">验证身份</button>
+    </div>
+    <div id="recover-step3" class="hidden">
+      <p class="muted">身份验证通过，请设置新密码（验证有效期 15 分钟）。</p>
+      <label>新密码（至少 6 位）</label>
+      <input id="recover-pass1" type="password" autocomplete="new-password">
+      <label>确认新密码</label>
+      <input id="recover-pass2" type="password" autocomplete="new-password">
+      <div class="err" id="recover-err3"></div>
+      <div class="ok" id="recover-ok3"></div>
+      <button id="btn-recover-reset" style="margin-top:8px">重置密码</button>
+    </div>
+    <button class="ghost" id="btn-recover-close" style="margin-top:10px;width:100%">关闭</button>
   </div>
 </div>
 
@@ -404,25 +439,82 @@
 
     <section id="page-account" class="page hidden">
       <div class="card">
-        <h2>账户</h2>
-        <p class="muted">当前管理员：<b id="acc-current"></b></p>
-        <label>新用户名（不改请留空，改用户名需同时设新密码）</label>
-        <input id="acc-user" type="text" autocomplete="username">
-        <label>新密码（不改请留空）</label>
-        <input id="acc-pass1" type="password" autocomplete="new-password">
-        <label>确认新密码</label>
-        <input id="acc-pass2" type="password" autocomplete="new-password">
-        <label>当前密码（必填）</label>
-        <input id="acc-cur" type="password" autocomplete="current-password">
-        <div class="ok" id="acc-ok"></div><div class="err" id="acc-err"></div>
-        <button id="btn-save-acc" style="margin-top:12px">保存</button>
+        <h2>我的资料</h2>
+        <p class="muted">当前登录：<b id="prof-user"></b> <span class="badge info" id="prof-role"></span></p>
+        <div id="prof-rename-wrap" class="hidden">
+          <label>用户名（超级管理员可修改，改用户名需同时设新密码）</label>
+          <input id="prof-username" type="text" autocomplete="username">
+        </div>
+        <div class="row">
+          <div style="flex:1;min-width:200px">
+            <label>绑定手机号 <span class="muted">（用于找回密码）</span></label>
+            <input id="prof-phone" type="text" inputmode="tel" autocomplete="tel" placeholder="未绑定">
+          </div>
+          <div style="flex:1;min-width:200px">
+            <label>绑定邮箱 <span class="muted">（用于找回密码）</span></label>
+            <input id="prof-email" type="text" inputmode="email" autocomplete="email" placeholder="未绑定">
+          </div>
+        </div>
+        <div class="ok" id="prof-ok"></div><div class="err" id="prof-err"></div>
+        <button id="btn-save-prof" style="margin-top:12px">保存资料</button>
       </div>
       <div class="card">
+        <h2>修改密码</h2>
+        <label>当前密码</label>
+        <input id="prof-cur" type="password" autocomplete="current-password">
+        <label>新密码（至少 6 位）</label>
+        <input id="prof-pass1" type="password" autocomplete="new-password">
+        <label>确认新密码</label>
+        <input id="prof-pass2" type="password" autocomplete="new-password">
+        <div class="ok" id="prof-pok"></div><div class="err" id="prof-perr"></div>
+        <button id="btn-save-pass" style="margin-top:12px">修改密码</button>
+      </div>
+      <div class="card hidden" id="users-card">
+        <h2>用户管理 <button class="ghost" id="btn-user-add" style="float:right">＋ 新建用户</button></h2>
+        <p class="muted">管理员可新建普通账户并设置其可访问的页面权限；普通账户通过绑定手机号 / 邮箱自助找回密码。</p>
+        <div style="overflow-x:auto"><table id="users-tbl">
+          <thead><tr><th>用户名</th><th>角色</th><th>权限</th><th>手机号</th><th>邮箱</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="users-body"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+        </table></div>
+      </div>
+      <div class="card" id="tfa-card">
         <h2>双重认证（2FA）</h2>
-        <p class="muted">启用后，登录除密码外还需输入验证器 App（Google Authenticator / 1Password 等）中的 6 位验证码。</p>
+        <p class="muted">启用后，超级管理员登录除密码外还需输入验证器 App（Google Authenticator / 1Password 等）中的 6 位验证码。</p>
         <div id="tfa-box"><p class="muted">加载中…</p></div>
       </div>
     </section>
+
+<!-- 用户编辑弹窗 -->
+<div id="modal-user" class="modal-bg hidden">
+  <div class="modal" style="max-width:520px">
+    <h2 id="user-modal-title">新建用户</h2>
+    <input type="hidden" id="user-id">
+    <label>用户名（3-32 位字母/数字/_/-）</label>
+    <input id="user-name" type="text" autocomplete="off">
+    <label>密码（至少 6 位，编辑时留空表示不改）</label>
+    <input id="user-pass" type="password" autocomplete="new-password">
+    <label>角色</label>
+    <div id="user-role-wrap">
+      <label style="display:inline;margin-right:20px"><input type="radio" name="user-role" value="user" checked> 普通用户</label>
+      <label style="display:inline" id="user-role-admin-wrap"><input type="radio" name="user-role" value="admin"> 管理员</label>
+    </div>
+    <div id="user-perms-wrap" style="margin-top:10px">
+      <label>页面权限</label>
+      <div id="user-perms" class="row" style="gap:6px 16px"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:1;min-width:160px"><label>手机号</label><input id="user-phone" type="text" inputmode="tel"></div>
+      <div style="flex:1;min-width:160px"><label>邮箱</label><input id="user-email" type="text" inputmode="email"></div>
+    </div>
+    <label style="margin-top:10px"><input type="checkbox" id="user-disabled"> 禁用该账户</label>
+    <div class="err" id="user-err"></div>
+    <div class="ok" id="user-ok"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="btn-user-save">保存</button>
+      <button class="ghost" id="btn-user-cancel">取消</button>
+    </div>
+  </div>
+</div>
 
     <section id="page-settings" class="page hidden">
       <div class="card">
@@ -744,6 +836,7 @@ async function api(path, method, body) {
   });
   let d = {};
   try { d = await r.json(); } catch(e) {}
+  if (r.status === 403) toast('无权访问该功能');
   return {status: r.status, data: d};
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
@@ -776,6 +869,7 @@ function show(id) {
   $(id).classList.remove('hidden');
 }
 function needLogin() {
+  ME = null;
   show('view-auth');
   $('auth-setup').classList.add('hidden');
   $('auth-login').classList.remove('hidden');
@@ -802,12 +896,40 @@ const PAGES = [
 ];
 let curPage = 'dashboard';
 function buildNav() {
-  $('nav').innerHTML = PAGES.map(([k, ico, name]) =>
+  const perms = (ME && ME.perms) || [];
+  const visible = PAGES.filter(([k]) => k === 'account' || k === 'about' || perms.includes(k));
+  $('nav').innerHTML = visible.map(([k, ico, name]) =>
     `<button data-p="${k}" class="${k===curPage?'active':''}"><span class="ico">${ico}</span>${name}</button>`).join('');
   document.querySelectorAll('#nav button').forEach(b => b.onclick = () => go(b.dataset.p));
 }
 const LOADERS = {};
+let ME = null; /* 当前登录用户身份：{username, role, is_super, perms[], can_manage_users} */
+function toast(msg) {
+  let t = $('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);' +
+      'background:#1c2942;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.35);z-index:9999;transition:opacity .3s;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.opacity = '0'; }, 2200);
+}
+function canVisit(p) {
+  if (p === 'account' || p === 'about') return true;
+  const perms = (ME && ME.perms) || [];
+  return perms.includes(p);
+}
 function go(p) {
+  if (!canVisit(p)) {
+    const first = PAGES.find(([k]) => canVisit(k));
+    p = first ? first[0] : 'account';
+    toast('无权访问该页面');
+  }
   curPage = p; buildNav();
   document.querySelectorAll('.page').forEach(x => x.classList.add('hidden'));
   $('page-' + p).classList.remove('hidden');
@@ -873,7 +995,83 @@ async function doLogin2fa() {
 $('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
 $('btn-logout').onclick = async () => { await api('/api/admin/logout', 'POST'); needLogin(); };
 
-function enterMain(data) {
+/* ---------------- 忘记密码 / 找回密码 ---------------- */
+let recoverToken = '';
+function recoverShow(step) {
+  ['recover-step1', 'recover-step2', 'recover-step3'].forEach((id, i) =>
+    $(id).classList.toggle('hidden', i !== step - 1));
+  ['recover-err1', 'recover-err2', 'recover-err3'].forEach(id => $(id).textContent = '');
+  $('recover-ok3').textContent = '';
+}
+$('link-forgot').onclick = () => {
+  recoverToken = '';
+  $('recover-user').value = ''; $('recover-phone').value = ''; $('recover-email').value = '';
+  $('recover-pass1').value = ''; $('recover-pass2').value = '';
+  recoverShow(1);
+  $('modal-recover').classList.remove('hidden');
+};
+$('btn-recover-close').onclick = () => $('modal-recover').classList.add('hidden');
+$('btn-recover-next').onclick = async () => {
+  $('recover-err1').textContent = '';
+  const username = $('recover-user').value.trim();
+  if (!username) { $('recover-err1').textContent = '请输入用户名'; return; }
+  const r = await fetch('/api/admin/recover/request', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username}),
+  });
+  let d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (!r.ok || !d.ok) { $('recover-err1').textContent = (d && d.error) || '请求失败'; return; }
+  $('recover-phone-wrap').style.display = d.need_phone ? '' : 'none';
+  $('recover-email-wrap').style.display = d.need_email ? '' : 'none';
+  const hints = [];
+  if (d.need_phone) hints.push('手机号 ' + d.masked_phone);
+  if (d.need_email) hints.push('邮箱 ' + d.masked_email);
+  $('recover-hint').textContent = '该账户绑定了' + hints.join('、') + '，请输入完整信息验证身份。';
+  recoverShow(2);
+};
+$('btn-recover-verify').onclick = async () => {
+  $('recover-err2').textContent = '';
+  const r = await fetch('/api/admin/recover/verify', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username: $('recover-user').value.trim(),
+      phone: $('recover-phone').value.trim(), email: $('recover-email').value.trim()}),
+  });
+  let d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (!r.ok || !d.ok) { $('recover-err2').textContent = (d && d.error) || '验证失败'; return; }
+  recoverToken = d.token;
+  recoverShow(3);
+};
+$('btn-recover-reset').onclick = async () => {
+  $('recover-err3').textContent = ''; $('recover-ok3').textContent = '';
+  const p1 = $('recover-pass1').value, p2 = $('recover-pass2').value;
+  if (p1 !== p2) { $('recover-err3').textContent = '两次新密码不一致'; return; }
+  if (p1.length < 6) { $('recover-err3').textContent = '新密码至少 6 位'; return; }
+  const r = await fetch('/api/admin/recover/reset', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({token: recoverToken, new_password: p1}),
+  });
+  let d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (!r.ok || !d.ok) { $('recover-err3').textContent = (d && d.error) || '重置失败'; return; }
+  $('recover-ok3').textContent = '密码已重置，请用新密码登录。';
+  recoverToken = '';
+  setTimeout(() => { $('modal-recover').classList.add('hidden'); $('login-user').value = ''; $('login-pass').value = ''; }, 1200);
+};
+
+async function enterMain(data) {
+  const {data: st} = await api('/api/admin/status');
+  ME = {
+    username: (st && st.username) || (data && data.username) || '',
+    role: (st && st.role) || '',
+    is_super: !!(st && st.is_super),
+    perms: (st && st.perms) || [],
+    can_manage_users: !!(st && st.can_manage_users),
+  };
   show('view-main');
   buildNav(); go('dashboard');
   loadSkin();
@@ -1677,8 +1875,9 @@ async function loadSessions() {
   const {status, data} = await api('/api/admin/sessions');
   if (status === 401) return needLogin();
   $('sess-info').innerHTML = data.sessions.length
-    ? '<table><thead><tr><th></th><th>IP</th><th>User-Agent</th><th>创建时间</th><th>最后活跃</th><th>过期时间</th></tr></thead><tbody>' +
+    ? '<table><thead><tr><th></th><th>用户</th><th>IP</th><th>User-Agent</th><th>创建时间</th><th>最后活跃</th><th>过期时间</th></tr></thead><tbody>' +
       data.sessions.map(s => `<tr><td>${s.current ? '<span class="badge info">本机</span>' : ''}</td>
+        <td>${esc(s.username || '-')}${s.role ? ' <span class="muted">(' + esc(s.role === 'superadmin' ? '超级管理员' : s.role === 'admin' ? '管理员' : '普通用户') + ')</span>' : ''}</td>
         <td>${esc(s.ip)}</td><td style="font-size:12px">${esc(s.user_agent)}</td>
         <td>${fmtDate(s.created_at)}</td><td>${fmtTime(s.last_seen)}</td><td>${fmtDate(s.expires_at)}</td></tr>`).join('') +
       '</tbody></table>'
@@ -1694,12 +1893,186 @@ $('btn-revoke-sess').onclick = async () => {
 };
 
 /* ---------------- 账户 ---------------- */
+const PERM_NAMES = {dashboard:'仪表板', servers:'服务器', themes:'主题管理', ping:'延迟监测',
+  alerts:'告警规则', exec:'远程执行', notify:'通知', events:'事件日志', database:'数据库',
+  sessions:'会话管理', settings:'设置', skin:'外观皮肤', logs:'系统日志'};
+const PERM_KEYS = Object.keys(PERM_NAMES);
+
 async function loadAccount() {
-  const {status, data} = await api('/api/admin/status');
+  const {status, data} = await api('/api/admin/profile');
   if (status === 401) return needLogin();
-  $('acc-current').textContent = data.username || 'admin';
-  ['acc-user','acc-pass1','acc-pass2','acc-cur'].forEach(id => $(id).value = '');
-  $('acc-ok').textContent = ''; $('acc-err').textContent = '';
+  if (status === 403) { toast('无权访问'); return; }
+  ME.is_super = data.is_super; ME.role = data.role;
+  ME.can_manage_users = data.can_manage_users;
+  $('prof-user').textContent = data.username;
+  $('prof-role').textContent = data.is_super ? '超级管理员' : (data.role === 'admin' ? '管理员' : '普通用户');
+  $('prof-phone').value = data.phone || '';
+  $('prof-email').value = data.email || '';
+  $('prof-ok').textContent = ''; $('prof-err').textContent = '';
+  $('prof-pok').textContent = ''; $('prof-perr').textContent = '';
+  ['prof-cur','prof-pass1','prof-pass2'].forEach(id => $(id).value = '');
+  if (data.is_super) {
+    $('prof-rename-wrap').classList.remove('hidden');
+    $('prof-username').value = data.username;
+    $('tfa-card').classList.remove('hidden');
+    load2fa();
+  } else {
+    $('prof-rename-wrap').classList.add('hidden');
+    $('tfa-card').classList.add('hidden');
+  }
+  if (data.can_manage_users) {
+    $('users-card').classList.remove('hidden');
+    loadUsers();
+    $('user-role-admin-wrap').style.display = data.is_super ? '' : 'none';
+  } else {
+    $('users-card').classList.add('hidden');
+  }
+}
+LOADERS.account = loadAccount;
+
+/* 我的资料 */
+$('btn-save-prof').onclick = async () => {
+  $('prof-ok').textContent = ''; $('prof-err').textContent = '';
+  const body = {phone: $('prof-phone').value.trim(), email: $('prof-email').value.trim()};
+  if (!$('prof-rename-wrap').classList.contains('hidden')) {
+    const nu = $('prof-username').value.trim();
+    if (nu && nu !== $('prof-user').textContent) body.username = nu;
+  }
+  const {status, data} = await api('/api/admin/profile', 'PUT', body);
+  if (status === 401) return needLogin();
+  if (data && data.ok) { $('prof-ok').textContent = '已保存'; loadAccount(); }
+  else $('prof-err').textContent = (data && data.error) || '保存失败';
+};
+/* 修改密码 */
+$('btn-save-pass').onclick = async () => {
+  $('prof-pok').textContent = ''; $('prof-perr').textContent = '';
+  const p1 = $('prof-pass1').value, p2 = $('prof-pass2').value;
+  if (p1 !== p2) { $('prof-perr').textContent = '两次新密码不一致'; return; }
+  if (!p1) { $('prof-perr').textContent = '请输入新密码'; return; }
+  const {status, data} = await api('/api/admin/profile', 'PUT',
+    {current_password: $('prof-cur').value, new_password: p1});
+  if (status === 401) {
+    if (data && data.error) { $('prof-perr').textContent = data.error; return; }
+    return needLogin();
+  }
+  if (data && data.ok) { $('prof-pok').textContent = '密码已修改'; ['prof-cur','prof-pass1','prof-pass2'].forEach(id => $(id).value = ''); }
+  else $('prof-perr').textContent = (data && data.error) || '修改失败';
+};
+
+/* ---------------- 用户管理 ---------------- */
+function permLabel(perms) {
+  if (!perms || !perms.length) return '<span class="muted">无</span>';
+  return perms.map(p => esc(PERM_NAMES[p] || p)).join('、');
+}
+async function loadUsers() {
+  const {status, data} = await api('/api/admin/users');
+  if (status === 401) return needLogin();
+  if (status !== 200) { $('users-body').innerHTML = '<tr><td colspan="7" class="muted">加载失败</td></tr>'; return; }
+  if (!data.length) { $('users-body').innerHTML = '<tr><td colspan="7" class="muted">暂无普通账户，点击右上角新建</td></tr>'; return; }
+  $('users-body').innerHTML = data.map(u => {
+    let perms;
+    try { perms = JSON.parse(u.perms || '[]'); } catch(e) { perms = []; }
+    const roleBadge = u.role === 'admin' ? '<span class="badge info">管理员</span>' : '<span class="badge">普通用户</span>';
+    const stBadge = u.disabled ? '<span class="badge off">已禁用</span>' : '<span class="badge on">正常</span>';
+    const isSelf = ME && ME.username === u.username;
+    const locked = isSelf || (u.role === 'admin' && ME && !ME.is_super);
+    const disAttr = locked ? ' disabled style="opacity:.4;pointer-events:none"' : '';
+    return `<tr>
+      <td>${esc(u.username)}</td><td>${roleBadge}</td><td style="max-width:220px">${permLabel(perms)}</td>
+      <td>${esc(u.phone || '-')}</td><td>${esc(u.email || '-')}</td><td>${stBadge}</td>
+      <td style="white-space:nowrap">
+        <button class="ghost small"${disAttr} onclick="openUserModal(${u.id})">编辑</button>
+        <button class="ghost small"${disAttr} onclick="toggleUserDisabled(${u.id}, ${u.disabled ? 0 : 1})">${u.disabled ? '启用' : '禁用'}</button>
+        <button class="ghost small danger"${disAttr} onclick="delUser(${u.id}, ${jsStr(u.username)})">删除</button>
+      </td></tr>`;
+  }).join('');
+}
+function buildPermCheckboxes(selected) {
+  selected = selected || [];
+  $('user-perms').innerHTML = PERM_KEYS.map(k =>
+    `<label style="display:inline-flex;align-items:center;gap:4px;font-size:13px">
+       <input type="checkbox" class="user-perm-cb" value="${k}"${selected.includes(k) ? ' checked' : ''}>${PERM_NAMES[k]}</label>`).join('');
+}
+function openUserModal(uid) {
+  $('user-err').textContent = ''; $('user-ok').textContent = '';
+  $('user-id').value = uid || '';
+  $('user-pass').value = '';
+  if (!uid) {
+    $('user-modal-title').textContent = '新建用户';
+    $('user-name').value = ''; $('user-name').disabled = false;
+    $('user-phone').value = ''; $('user-email').value = '';
+    $('user-disabled').checked = false;
+    document.querySelector('input[name="user-role"][value="user"]').checked = true;
+    buildPermCheckboxes(['dashboard', 'servers']);
+    $('user-perms-wrap').style.display = '';
+  } else {
+    $('user-modal-title').textContent = '编辑用户';
+    api('/api/admin/users').then(({status, data}) => {
+      if (status !== 200) return;
+      const u = (data || []).find(x => x.id === uid);
+      if (!u) return;
+      $('user-name').value = u.username; $('user-name').disabled = true;
+      $('user-phone').value = u.phone || ''; $('user-email').value = u.email || '';
+      $('user-disabled').checked = !!u.disabled;
+      document.querySelector(`input[name="user-role"][value="${u.role}"]`).checked = true;
+      let perms = [];
+      try { perms = JSON.parse(u.perms || '[]'); } catch(e) {}
+      buildPermCheckboxes(perms);
+      syncRolePerms();
+    });
+  }
+  $('modal-user').classList.remove('hidden');
+}
+function syncRolePerms() {
+  const role = document.querySelector('input[name="user-role"]:checked').value;
+  $('user-perms-wrap').style.display = role === 'admin' ? 'none' : '';
+}
+document.querySelectorAll('input[name="user-role"]').forEach(r => r.onchange = syncRolePerms);
+$('btn-user-add').onclick = () => openUserModal(0);
+$('btn-user-cancel').onclick = () => $('modal-user').classList.add('hidden');
+$('btn-user-save').onclick = async () => {
+  $('user-err').textContent = ''; $('user-ok').textContent = '';
+  const uid = $('user-id').value;
+  const role = document.querySelector('input[name="user-role"]:checked').value;
+  const perms = [...document.querySelectorAll('.user-perm-cb:checked')].map(c => c.value);
+  const body = {role, perms,
+    phone: $('user-phone').value.trim(), email: $('user-email').value.trim(),
+    disabled: $('user-disabled').checked ? 1 : 0};
+  const np = $('user-pass').value;
+  let res;
+  if (!uid) {
+    const username = $('user-name').value.trim();
+    if (!username) { $('user-err').textContent = '请输入用户名'; return; }
+    if (!np) { $('user-err').textContent = '请设置初始密码'; return; }
+    body.username = username; body.new_password = np;
+    res = await api('/api/admin/users', 'POST', body);
+  } else {
+    if (np) body.new_password = np;
+    res = await api('/api/admin/users/' + uid, 'PUT', body);
+  }
+  if (res.status === 401) return needLogin();
+  if (res.data && res.data.ok) {
+    $('user-ok').textContent = '已保存';
+    loadUsers();
+    setTimeout(() => $('modal-user').classList.add('hidden'), 600);
+  } else $('user-err').textContent = (res.data && res.data.error) || '保存失败';
+};
+async function toggleUserDisabled(uid, disabled) {
+  const {status, data} = await api('/api/admin/users/' + uid, 'PUT', {disabled});
+  if (status === 401) return needLogin();
+  if (data && data.ok) loadUsers();
+  else toast((data && data.error) || '操作失败');
+}
+async function delUser(uid, username) {
+  if (!confirm('确定删除用户 ' + username + ' 吗？')) return;
+  const {status, data} = await api('/api/admin/users/' + uid, 'DELETE');
+  if (status === 401) return needLogin();
+  if (data && data.ok) loadUsers();
+  else toast((data && data.error) || '删除失败');
+}
+
+/* ---------------- 双重认证（仅超管） ---------------- */
+async function load2fa() {
   const t = await api('/api/admin/2fa');
   const box = $('tfa-box');
   if (t.status !== 200) { box.innerHTML = '<p class="muted">加载失败</p>'; return; }
@@ -1712,7 +2085,7 @@ async function loadAccount() {
       $('tfa-err').textContent = '';
       const {status: s2, data: d2} = await api('/api/admin/2fa/disable', 'POST', {password: $('tfa-cur-pass').value});
       if (s2 === 401) { const m = (d2 && d2.error) || ''; if (m) { $('tfa-err').textContent = m; return; } return needLogin(); }
-      if (d2 && d2.ok) loadAccount();
+      if (d2 && d2.ok) load2fa();
     };
   } else {
     box.innerHTML = `<p class="muted">尚未启用。</p><button id="btn-tfa-setup">生成密钥并启用</button><div id="tfa-setup-box"></div>`;
@@ -1729,30 +2102,12 @@ async function loadAccount() {
       $('btn-tfa-enable').onclick = async () => {
         $('tfa-err').textContent = '';
         const {data: d3} = await api('/api/admin/2fa/enable', 'POST', {code: $('tfa-code').value.trim()});
-        if (d3 && d3.ok) { alert('双重认证已启用'); loadAccount(); }
+        if (d3 && d3.ok) { alert('双重认证已启用'); load2fa(); }
         else $('tfa-err').textContent = '验证码错误';
       };
     };
   }
 }
-LOADERS.account = loadAccount;
-$('btn-save-acc').onclick = async () => {
-  $('acc-ok').textContent = ''; $('acc-err').textContent = '';
-  const p1 = $('acc-pass1').value, p2 = $('acc-pass2').value;
-  if (p1 !== p2) { $('acc-err').textContent = '两次新密码不一致'; return; }
-  if (!p1 && !$('acc-user').value.trim()) { $('acc-err').textContent = '没有要修改的内容'; return; }
-  const {status, data} = await api('/api/admin/account', 'POST', {
-    username: $('acc-user').value.trim(), new_password: p1,
-    current_password: $('acc-cur').value });
-  if (status === 401) {
-    if (data && data.error) $('acc-err').textContent = data.error;
-    else needLogin();
-    return;
-  }
-  if (data && data.ok) { $('acc-ok').textContent = '已保存（用户名：' + esc(data.username) + '）'; loadAccount(); }
-  else $('acc-err').textContent = (data && data.error) || '保存失败';
-};
-
 /* ---------------- 设置 ---------------- */
 async function loadSettings() {
   const {status, data} = await api('/api/admin/settings');
@@ -1808,8 +2163,11 @@ function buildSwatches(cur) {
   });
 }
 async function loadSkin() {
-  const {status, data} = await api('/api/admin/skin');
-  if (status === 401) return needLogin();
+  // 无 skin 权限时静默使用默认皮肤（api() 的 403 toast 会打扰，此处直接 fetch）
+  const r = await fetch('/api/admin/skin', {credentials: 'same-origin'});
+  if (r.status === 401) return needLogin();
+  let data = {};
+  try { data = r.ok ? await r.json() : {}; } catch(e) {}
   const skin = applySkin(data);
   document.querySelectorAll('input[name="skin-mode"]').forEach(r => { r.checked = (r.value === skin.mode); });
   $('skin-accent').value = skin.accent;

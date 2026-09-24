@@ -44,7 +44,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from importlib.metadata import version as _pkg_version
 
-from flask import Flask, Response, jsonify, request, send_from_directory, session
+from flask import Flask, Response, g, jsonify, request, send_from_directory, session
 from flask_cors import CORS
 
 from storage import Storage
@@ -1555,41 +1555,109 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             pass
 
     # ------------------------------------------------------------ admin API
-    # ------------------------------------------------------------ admin auth (v3)
-    def _create_admin_session():
+    # ------------------------------------------------------------ admin auth (v3, v1.9.8 多账户)
+    # 权限页键（与后台导航 PAGES 一一对应）
+    PERM_PAGES = ["dashboard", "servers", "themes", "ping", "alerts", "exec",
+                  "notify", "events", "database", "sessions", "account",
+                  "settings", "skin", "logs"]
+
+    def _create_login_session(username: str, role: str):
         sid = secrets.token_hex(16)
         store.create_session(sid, request.remote_addr or "",
-                             request.headers.get("User-Agent", ""))
+                             request.headers.get("User-Agent", ""),
+                             username=username, role=role)
         session["sid"] = sid
         session["v"] = _session_version()
         store.log_event("info", "auth",
-                        f"管理员登录成功（IP {request.remote_addr or '-'}）")
+                        f"用户 {username} 登录成功（IP {request.remote_addr or '-'}）")
         return sid
 
-    def _admin_logged_in() -> bool:
+    def _login_user():
+        """返回当前登录用户身份 dict 或 None。dict: username/role/perms/is_super。"""
         sid = session.get("sid")
         s = store.get_session(sid) if sid else None
         if not s or session.get("v") != _session_version():
-            return False
+            return None
         exp = _parse_time(s.get("expires_at"))
-        return bool(exp and exp >= datetime.now(timezone.utc))
+        if not exp or exp < datetime.now(timezone.utc):
+            return None
+        try:
+            last = _parse_time(s.get("last_seen"))
+            if not last or (datetime.now(timezone.utc) - last).total_seconds() > 120:
+                store.touch_session(sid)
+        except Exception:
+            pass
+        username = s.get("username") or ""
+        role = s.get("role") or ""
+        # 超级管理员：首次安装时创建的根账户，拥有全部权限
+        if role == "superadmin" or (not username and store.get_admin_username()):
+            return {"username": store.get_admin_username(), "role": "superadmin",
+                    "perms": set(PERM_PAGES), "is_super": True}
+        u = store.get_user_by_username(username) if username else None
+        if not u or u.get("disabled"):
+            return None
+        if u.get("role") == "admin":
+            perms = set(PERM_PAGES)
+        else:
+            try:
+                perms = set(json.loads(u.get("perms") or "[]"))
+            except Exception:
+                perms = set()
+            perms &= set(PERM_PAGES)
+        return {"username": u["username"], "role": u.get("role") or "user",
+                "perms": perms, "is_super": False, "user_id": u["id"],
+                "phone": u.get("phone") or "", "email": u.get("email") or ""}
 
-    def _require_admin(fn):
+    def _admin_logged_in() -> bool:
+        return _login_user() is not None
+
+    def _require_login(fn):
         @functools.wraps(fn)
         def wrapper(*a, **kw):
-            sid = session.get("sid")
-            s = store.get_session(sid) if sid else None
-            if not s or session.get("v") != _session_version():
+            u = _login_user()
+            if not u:
                 return jsonify({"error": "login required"}), 401
-            exp = _parse_time(s.get("expires_at"))
-            if not exp or exp < datetime.now(timezone.utc):
+            g.uinfo = u
+            return fn(*a, **kw)
+        return wrapper
+
+    def _require_perm(page):
+        def deco(fn):
+            @functools.wraps(fn)
+            def wrapper(*a, **kw):
+                u = _login_user()
+                if not u:
+                    return jsonify({"error": "login required"}), 401
+                if page not in u["perms"]:
+                    return jsonify({"error": "forbidden"}), 403
+                g.uinfo = u
+                return fn(*a, **kw)
+            return wrapper
+        return deco
+
+    def _require_admin(fn):
+        """v1.9.8 起含义变更：超级管理员或管理员角色（可管理用户），不再是“任意登录”。"""
+        @functools.wraps(fn)
+        def wrapper(*a, **kw):
+            u = _login_user()
+            if not u:
                 return jsonify({"error": "login required"}), 401
-            try:
-                last = _parse_time(s.get("last_seen"))
-                if not last or (datetime.now(timezone.utc) - last).total_seconds() > 120:
-                    store.touch_session(sid)
-            except Exception:
-                pass
+            if not (u["is_super"] or u["role"] == "admin"):
+                return jsonify({"error": "forbidden"}), 403
+            g.uinfo = u
+            return fn(*a, **kw)
+        return wrapper
+
+    def _require_superadmin(fn):
+        """仅超级管理员（安装时创建的根账户）。"""
+        @functools.wraps(fn)
+        def wrapper(*a, **kw):
+            u = _login_user()
+            if not u:
+                return jsonify({"error": "login required"}), 401
+            if not u["is_super"]:
+                return jsonify({"error": "forbidden"}), 403
+            g.uinfo = u
             return fn(*a, **kw)
         return wrapper
 
@@ -1604,21 +1672,29 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         if not password:
             return jsonify({"error": "password required"}), 400
         store.set_admin(username, password)
-        _create_admin_session()
+        _create_login_session(username, "superadmin")
         return jsonify({"ok": True, "username": username})
 
     @app.route("/api/admin/login", methods=["POST"])
     def admin_login():
         data = request.get_json(force=True, silent=True) or {}
-        if not store.verify_admin(data.get("password", ""), data.get("username", "")):
-            store.log_event("warn", "auth",
-                            f"管理员登录失败（IP {request.remote_addr or '-'}）")
-            return jsonify({"error": "invalid username or password"}), 401
-        if (store.get_setting("totp_enabled", "0") or "0") == "1":
-            session["pre2fa"] = True
-            return jsonify({"ok": False, "need_2fa": True})
-        _create_admin_session()
-        return jsonify({"ok": True, "username": store.get_admin_username()})
+        username = (data.get("username") or "").strip()
+        password = data.get("password", "")
+        # 1) 超级管理员（安装时创建的根账户）
+        if store.verify_admin(password, username):
+            if (store.get_setting("totp_enabled", "0") or "0") == "1":
+                session["pre2fa"] = True
+                return jsonify({"ok": False, "need_2fa": True})
+            _create_login_session(store.get_admin_username(), "superadmin")
+            return jsonify({"ok": True, "username": store.get_admin_username()})
+        # 2) 普通账户（users 表）
+        u = store.verify_user(username, password) if username else None
+        if u:
+            _create_login_session(u["username"], u.get("role") or "user")
+            return jsonify({"ok": True, "username": u["username"]})
+        store.log_event("warn", "auth",
+                        f"用户 {username or '-'} 登录失败（IP {request.remote_addr or '-'}）")
+        return jsonify({"error": "invalid username or password"}), 401
 
     @app.route("/api/admin/login/2fa", methods=["POST"])
     def admin_login_2fa():
@@ -1627,7 +1703,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         data = request.get_json(force=True, silent=True) or {}
         if _totp_verify(store.get_setting("totp_secret", ""), data.get("code", "")):
             session.pop("pre2fa", None)
-            _create_admin_session()
+            _create_login_session(store.get_admin_username(), "superadmin")
             return jsonify({"ok": True, "username": store.get_admin_username()})
         return jsonify({"error": "验证码错误"}), 401
 
@@ -1645,22 +1721,21 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     @app.route("/api/admin/status")
     def admin_status():
-        sid = session.get("sid")
-        s = store.get_session(sid) if sid else None
-        logged = bool(s) and session.get("v") == _session_version()
-        if logged:
-            exp = _parse_time(s.get("expires_at"))
-            logged = bool(exp and exp > datetime.now(timezone.utc))
+        u = _login_user()
         return jsonify({
             "has_admin": store.has_admin(),
-            "logged_in": logged,
-            "username": store.get_admin_username() if logged else "",
+            "logged_in": bool(u),
+            "username": u["username"] if u else "",
+            "role": u["role"] if u else "",
+            "is_super": bool(u and u["is_super"]),
+            "perms": sorted(u["perms"]) if u else [],
+            "can_manage_users": bool(u and (u["is_super"] or u["role"] == "admin")),
             "nodes": len(store.list_clients()),
             "need_2fa": bool(session.get("pre2fa")),
         })
 
     @app.route("/api/admin/clients")
-    @_require_admin
+    @_require_perm("servers")
     def admin_clients():
         now = datetime.now(timezone.utc)
         today = now.date()
@@ -1676,26 +1751,26 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify(out)
 
     @app.route("/api/admin/client/add", methods=["POST"])
-    @_require_admin
+    @_require_perm("servers")
     def admin_client_add():
         data = request.get_json(force=True, silent=True) or {}
         client = store.add_client(name=data.get("name", ""))
         return jsonify(client)
 
     @app.route("/api/admin/client/<client_uuid>", methods=["POST"])
-    @_require_admin
+    @_require_perm("servers")
     def admin_client_edit(client_uuid):
         data = request.get_json(force=True, silent=True) or {}
         ok = store.update_client(client_uuid, data)
         return jsonify({"ok": ok})
 
     @app.route("/api/admin/client/<client_uuid>", methods=["DELETE"])
-    @_require_admin
+    @_require_perm("servers")
     def admin_client_delete(client_uuid):
         return jsonify({"ok": store.delete_client(client_uuid)})
 
     @app.route("/api/admin/settings", methods=["GET", "POST"])
-    @_require_admin
+    @_require_perm("settings")
     def admin_settings():
         if request.method == "GET":
             out = store.get_public_settings()
@@ -1765,7 +1840,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return sorted(out, key=lambda x: x["days"])
 
     @app.route("/api/admin/dashboard")
-    @_require_admin
+    @_require_perm("dashboard")
     def admin_dashboard():
         clients = store.list_clients()
         online = [c for c in clients if _is_online(c)]
@@ -1793,7 +1868,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         })
 
     @app.route("/api/admin/notify/test", methods=["POST"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_test():
         data = request.get_json(force=True, silent=True) or {}
         # 渠道下标优先；否则兼容旧的 webhook 直发
@@ -1810,32 +1885,270 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         ok = _post_webhook(url, "✅ BigCat 通知测试：webhook 工作正常", timeout=10)
         return jsonify({"ok": ok} if ok else {"error": "webhook 发送失败，请检查 URL"}), 200 if ok else 502
 
-    @app.route("/api/admin/account", methods=["POST"])
-    @_require_admin
-    def admin_account():
+    # ------------------------------------------------------------ v1.9.8 账户体系
+    _USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,32}$")
+    _PHONE_RE = re.compile(r"^[+\d][\d\s-]{4,19}$")
+    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    def _mask_phone(p):
+        p = p or ""
+        if len(p) <= 4:
+            return "****"
+        return p[:3] + "****" + p[-4:]
+
+    def _mask_email(e):
+        e = e or ""
+        parts = e.split("@")
+        if len(parts) != 2:
+            return "****"
+        name, domain = parts
+        return (name[0] + "***" if name else "***") + "@" + domain
+
+    def _account_lookup(username):
+        """按用户名查找账户，返回 (kind, obj)：kind 为 'super' 或 'user'。"""
+        username = (username or "").strip()
+        if not username:
+            return None, None
+        if username == store.get_admin_username():
+            return "super", {
+                "username": store.get_admin_username(),
+                "phone": store.get_setting("admin_phone", "") or "",
+                "email": store.get_setting("admin_email", "") or "",
+            }
+        u = store.get_user_by_username(username)
+        if u:
+            return "user", u
+        return None, None
+
+    @app.route("/api/admin/profile")
+    @_require_login
+    def admin_profile():
+        u = g.uinfo
+        if u["is_super"]:
+            phone = store.get_setting("admin_phone", "") or ""
+            email = store.get_setting("admin_email", "") or ""
+        else:
+            phone, email = u.get("phone", ""), u.get("email", "")
+        return jsonify({
+            "username": u["username"], "role": u["role"], "is_super": u["is_super"],
+            "perms": sorted(u["perms"]), "phone": phone, "email": email,
+            "can_manage_users": u["is_super"] or u["role"] == "admin",
+        })
+
+    @app.route("/api/admin/profile", methods=["PUT"])
+    @_require_login
+    def admin_profile_update():
+        u = g.uinfo
         data = request.get_json(force=True, silent=True) or {}
-        cur_username = store.get_admin_username()
-        if not store.verify_admin(data.get("current_password", ""), cur_username):
-            return jsonify({"error": "当前密码错误"}), 401
+        # 仅当请求明确携带字段时才更新，避免改密码时清空绑定资料
+        phone = (data.get("phone") or "").strip() if "phone" in data else None
+        email = (data.get("email") or "").strip() if "email" in data else None
+        if phone and not _PHONE_RE.match(phone):
+            return jsonify({"error": "手机号格式无效"}), 400
+        if email and not _EMAIL_RE.match(email):
+            return jsonify({"error": "邮箱格式无效"}), 400
+        new_password = data.get("new_password") or ""
+        if new_password and len(new_password) < 6:
+            return jsonify({"error": "新密码至少 6 位"}), 400
+        if u["is_super"]:
+            # 超管改密码 / 用户名需验证当前密码
+            if new_password or (data.get("username") or "").strip():
+                if not store.verify_admin(data.get("current_password", ""), store.get_admin_username()):
+                    return jsonify({"error": "当前密码错误"}), 401
+            username = (data.get("username") or "").strip()
+            if username and username != store.get_admin_username():
+                if not _USERNAME_RE.match(username):
+                    return jsonify({"error": "用户名需 3-32 位字母/数字/_/-"}), 400
+                if not new_password:
+                    return jsonify({"error": "修改用户名需同时设置新密码"}), 400
+                store.set_admin(username, new_password)
+            elif new_password:
+                store.set_admin_password(new_password)
+            if phone is not None:
+                store.set_setting("admin_phone", phone)
+            if email is not None:
+                store.set_setting("admin_email", email)
+        else:
+            if new_password:
+                full = store.get_user_by_username(u["username"])
+                if not full or full.get("password_hash") != store._hash_pw(data.get("current_password", "")):
+                    return jsonify({"error": "当前密码错误"}), 401
+                store.set_user_password(u["user_id"], new_password)
+            contact = {}
+            if phone is not None:
+                contact["phone"] = phone
+            if email is not None:
+                contact["email"] = email
+            if contact:
+                store.update_user(u["user_id"], contact)
+        store.log_event("info", "auth", f"用户 {u['username']} 更新了个人资料")
+        return jsonify({"ok": True})
+
+    @app.route("/api/admin/users")
+    @_require_admin
+    def admin_users_list():
+        return jsonify(store.list_users())
+
+    @app.route("/api/admin/users", methods=["POST"])
+    @_require_admin
+    def admin_users_create():
+        me = g.uinfo
+        data = request.get_json(force=True, silent=True) or {}
         username = (data.get("username") or "").strip()
-        new_password = data.get("new_password", "")
-        if username and username != cur_username and not new_password:
-            return jsonify({"error": "修改用户名需同时设置新密码"}), 400
-        if new_password:
-            store.set_admin(username or cur_username, new_password)
-        elif username and username != cur_username:
-            return jsonify({"error": "修改用户名需同时设置新密码"}), 400
-        return jsonify({"ok": True, "username": store.get_admin_username()})
+        password = data.get("password") or ""
+        role = data.get("role") if data.get("role") in ("admin", "user") else "user"
+        if not _USERNAME_RE.match(username):
+            return jsonify({"error": "用户名需 3-32 位字母/数字/_/-"}), 400
+        if len(password) < 6:
+            return jsonify({"error": "密码至少 6 位"}), 400
+        if username == store.get_admin_username() or store.get_user_by_username(username):
+            return jsonify({"error": "用户名已存在"}), 400
+        if role == "admin" and not me["is_super"]:
+            return jsonify({"error": "只有超级管理员可以创建管理员账户"}), 403
+        perms = [p for p in (data.get("perms") or []) if p in PERM_PAGES] if role == "user" else list(PERM_PAGES)
+        phone = (data.get("phone") or "").strip()
+        email = (data.get("email") or "").strip()
+        if phone and not _PHONE_RE.match(phone):
+            return jsonify({"error": "手机号格式无效"}), 400
+        if email and not _EMAIL_RE.match(email):
+            return jsonify({"error": "邮箱格式无效"}), 400
+        u = store.create_user(username, password, role, perms, phone, email)
+        store.log_event("info", "auth", f"用户 {me['username']} 创建了账户 {username}（{role}）")
+        return jsonify({"ok": True, "user": u})
+
+    @app.route("/api/admin/users/<int:uid>", methods=["PUT"])
+    @_require_admin
+    def admin_users_update(uid):
+        me = g.uinfo
+        u = store.get_user_by_id(uid)
+        if not u:
+            return jsonify({"error": "用户不存在"}), 404
+        if u.get("role") == "admin" and not me["is_super"]:
+            return jsonify({"error": "只有超级管理员可以管理管理员账户"}), 403
+        data = request.get_json(force=True, silent=True) or {}
+        fields = {}
+        if "phone" in data:
+            phone = (data.get("phone") or "").strip()
+            if phone and not _PHONE_RE.match(phone):
+                return jsonify({"error": "手机号格式无效"}), 400
+            fields["phone"] = phone
+        if "email" in data:
+            email = (data.get("email") or "").strip()
+            if email and not _EMAIL_RE.match(email):
+                return jsonify({"error": "邮箱格式无效"}), 400
+            fields["email"] = email
+        if "role" in data:
+            role = data.get("role")
+            if role not in ("admin", "user"):
+                return jsonify({"error": "角色无效"}), 400
+            if role != u.get("role") and not me["is_super"]:
+                return jsonify({"error": "只有超级管理员可以变更角色"}), 403
+            fields["role"] = role
+            fields["perms"] = json.dumps(list(PERM_PAGES) if role == "admin"
+                                         else [p for p in (data.get("perms") or []) if p in PERM_PAGES])
+        elif "perms" in data and u.get("role") == "user":
+            fields["perms"] = json.dumps([p for p in (data.get("perms") or []) if p in PERM_PAGES])
+        if "disabled" in data:
+            if u["username"] == me["username"]:
+                return jsonify({"error": "不能禁用自己的账户"}), 400
+            fields["disabled"] = 1 if data.get("disabled") else 0
+        if "new_password" in data and data.get("new_password"):
+            if len(data.get("new_password")) < 6:
+                return jsonify({"error": "密码至少 6 位"}), 400
+            fields["password_hash"] = store._hash_pw(data.get("new_password"))
+        if not fields:
+            return jsonify({"error": "没有要修改的内容"}), 400
+        store.update_user(uid, fields)
+        store.log_event("info", "auth", f"用户 {me['username']} 更新了账户 {u['username']}")
+        return jsonify({"ok": True, "user": store.get_user_by_id(uid)})
+
+    @app.route("/api/admin/users/<int:uid>", methods=["DELETE"])
+    @_require_admin
+    def admin_users_delete(uid):
+        me = g.uinfo
+        u = store.get_user_by_id(uid)
+        if not u:
+            return jsonify({"error": "用户不存在"}), 404
+        if u.get("role") == "admin" and not me["is_super"]:
+            return jsonify({"error": "只有超级管理员可以删除管理员账户"}), 403
+        if u["username"] == me["username"]:
+            return jsonify({"error": "不能删除自己的账户"}), 400
+        store.delete_user(uid)
+        store.log_event("warn", "auth", f"用户 {me['username']} 删除了账户 {u['username']}")
+        return jsonify({"ok": True})
+
+    # ---------------- 忘记密码 / 找回密码（无需登录）
+    @app.route("/api/admin/recover/request", methods=["POST"])
+    def admin_recover_request():
+        data = request.get_json(force=True, silent=True) or {}
+        kind, obj = _account_lookup(data.get("username"))
+        if not obj:
+            return jsonify({"error": "账户不存在"}), 404
+        phone, email = obj.get("phone") or "", obj.get("email") or ""
+        if not phone and not email:
+            return jsonify({"error": "该账户未绑定手机号或邮箱，无法自助找回，请联系管理员"}), 400
+        return jsonify({"ok": True, "need_phone": bool(phone), "need_email": bool(email),
+                        "masked_phone": _mask_phone(phone) if phone else "",
+                        "masked_email": _mask_email(email) if email else ""})
+
+    @app.route("/api/admin/recover/verify", methods=["POST"])
+    def admin_recover_verify():
+        data = request.get_json(force=True, silent=True) or {}
+        kind, obj = _account_lookup(data.get("username"))
+        if not obj:
+            return jsonify({"error": "账户不存在"}), 404
+        phone, email = obj.get("phone") or "", obj.get("email") or ""
+        if not phone and not email:
+            return jsonify({"error": "该账户未绑定手机号或邮箱，无法自助找回，请联系管理员"}), 400
+        if phone and (data.get("phone") or "").strip() != phone:
+            store.log_event("warn", "auth", f"账户 {obj['username']} 找回密码验证失败（手机）")
+            return jsonify({"error": "验证信息不正确"}), 400
+        if email and (data.get("email") or "").strip().lower() != email.lower():
+            store.log_event("warn", "auth", f"账户 {obj['username']} 找回密码验证失败（邮箱）")
+            return jsonify({"error": "验证信息不正确"}), 400
+        token = store.create_recovery_token(obj["username"], kind == "super")
+        return jsonify({"ok": True, "token": token})
+
+    @app.route("/api/admin/recover/reset", methods=["POST"])
+    def admin_recover_reset():
+        data = request.get_json(force=True, silent=True) or {}
+        new_password = data.get("new_password") or ""
+        if len(new_password) < 6:
+            return jsonify({"error": "新密码至少 6 位"}), 400
+        rec = store.consume_recovery_token(data.get("token") or "")
+        if not rec:
+            return jsonify({"error": "验证已过期，请重新发起找回"}), 400
+        if rec.get("is_super"):
+            store.set_admin_password(new_password)
+        else:
+            u = store.get_user_by_username(rec.get("username") or "")
+            if not u:
+                return jsonify({"error": "账户不存在"}), 404
+            store.set_user_password(u["id"], new_password)
+        # 密码重置后强制该账户全部会话失效
+        try:
+            store._conn.execute("DELETE FROM sessions WHERE username = ?", (rec.get("username"),))
+            store._conn.commit()
+        except Exception:
+            pass
+        store.log_event("warn", "auth", f"账户 {rec.get('username')} 通过找回密码重置了密码")
+        return jsonify({"ok": True})
 
     @app.route("/api/admin/sessions")
-    @_require_admin
+    @_require_perm("sessions")
     def admin_sessions():
         my_sid = session.get("sid")
+        me = g.uinfo
+        privileged = me["is_super"] or me["role"] == "admin"
         out = []
         for s in store.list_sessions():
+            if not privileged and (s.get("username") or "") != me["username"]:
+                continue
             out.append({
                 "id": s["id"][:8] + "…",
                 "ip": s.get("ip") or "",
+                "username": s.get("username") or "",
+                "role": s.get("role") or "",
                 "user_agent": (s.get("user_agent") or "")[:120],
                 "created_at": s.get("created_at"),
                 "last_seen": s.get("last_seen"),
@@ -1854,7 +2167,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True, "deleted": n})
 
     @app.route("/api/admin/logs")
-    @_require_admin
+    @_require_perm("logs")
     def admin_logs():
         try:
             lines = max(50, min(1000, int(request.args.get("lines", 200))))
@@ -1873,7 +2186,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                         "hint": "未找到 systemd 日志（journalctl -u bigcat 不可用），请直接在服务器上查看"})
 
     @app.route("/api/admin/events")
-    @_require_admin
+    @_require_perm("events")
     def admin_events():
         try:
             page = max(1, int(request.args.get("page", 1)))
@@ -1889,13 +2202,13 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         })
 
     @app.route("/api/admin/events", methods=["DELETE"])
-    @_require_admin
+    @_require_perm("events")
     def admin_events_clear():
         n = store.clear_events()
         return jsonify({"ok": True, "deleted": n})
 
     @app.route("/api/admin/about")
-    @_require_admin
+    @_require_login
     def admin_about():
         try:
             flask_v = _pkg_version("flask")
@@ -1917,7 +2230,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     # ============================================================ v3 API
     # ---------------- 统计 ----------------
     @app.route("/api/admin/stats/traffic")
-    @_require_admin
+    @_require_perm("dashboard")
     def admin_stats_traffic():
         try:
             hours = max(1, min(168, int(request.args.get("hours", 24))))
@@ -1934,7 +2247,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         })
 
     @app.route("/api/admin/stats/rank")
-    @_require_admin
+    @_require_perm("dashboard")
     def admin_stats_rank():
         try:
             hours = max(1, min(168, int(request.args.get("hours", 24))))
@@ -1957,7 +2270,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify(out)
 
     @app.route("/api/admin/stats/ping")
-    @_require_admin
+    @_require_perm("dashboard")
     def admin_stats_ping():
         try:
             hours = max(1, min(720, int(request.args.get("hours", 24))))
@@ -1968,12 +2281,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     # ---------------- 延迟监测任务 ----------------
     @app.route("/api/admin/ping/tasks", methods=["GET"])
-    @_require_admin
+    @_require_perm("ping")
     def admin_ping_tasks():
         return jsonify([_public_ping_task(t) for t in store.list_ping_tasks()])
 
     @app.route("/api/admin/ping/tasks", methods=["POST"])
-    @_require_admin
+    @_require_perm("ping")
     def admin_ping_task_add():
         data = request.get_json(force=True, silent=True) or {}
         name = (data.get("name") or "").strip()
@@ -1994,7 +2307,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify(_public_ping_task(task))
 
     @app.route("/api/admin/ping/tasks/<int:task_id>", methods=["PUT"])
-    @_require_admin
+    @_require_perm("ping")
     def admin_ping_task_update(task_id):
         data = request.get_json(force=True, silent=True) or {}
         fields = {}
@@ -2017,14 +2330,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True})
 
     @app.route("/api/admin/ping/tasks/<int:task_id>", methods=["DELETE"])
-    @_require_admin
+    @_require_perm("ping")
     def admin_ping_task_delete(task_id):
         store.delete_ping_task(task_id)
         store.log_event("info", "ping", f"删除延迟任务 {task_id}")
         return jsonify({"ok": True})
 
     @app.route("/api/admin/ping/results")
-    @_require_admin
+    @_require_perm("ping")
     def admin_ping_results():
         try:
             hours = max(1, min(720, int(request.args.get("hours", 24))))
@@ -2040,12 +2353,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     # ---------------- 负载告警规则 ----------------
     @app.route("/api/admin/alerts", methods=["GET"])
-    @_require_admin
+    @_require_perm("alerts")
     def admin_alerts():
         return jsonify(store.list_alert_rules())
 
     @app.route("/api/admin/alerts", methods=["POST"])
-    @_require_admin
+    @_require_perm("alerts")
     def admin_alert_add():
         data = request.get_json(force=True, silent=True) or {}
         name = (data.get("name") or "").strip() or "未命名规则"
@@ -2073,7 +2386,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify(rule)
 
     @app.route("/api/admin/alerts/<int:rule_id>", methods=["PUT"])
-    @_require_admin
+    @_require_perm("alerts")
     def admin_alert_update(rule_id):
         data = request.get_json(force=True, silent=True) or {}
         fields = {}
@@ -2088,19 +2401,19 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True})
 
     @app.route("/api/admin/alerts/<int:rule_id>", methods=["DELETE"])
-    @_require_admin
+    @_require_perm("alerts")
     def admin_alert_delete(rule_id):
         store.delete_alert_rule(rule_id)
         return jsonify({"ok": True})
 
     # ---------------- 通知 ----------------
     @app.route("/api/admin/notify/channels", methods=["GET"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_channels():
         return jsonify(_get_channels())
 
     @app.route("/api/admin/notify/channels", methods=["POST"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_channel_add():
         data = request.get_json(force=True, silent=True) or {}
         typ = str(data.get("type", "webhook")).lower()
@@ -2117,7 +2430,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True, "index": len(ch) - 1})
 
     @app.route("/api/admin/notify/channels/<int:index>", methods=["PUT"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_channel_update(index):
         data = request.get_json(force=True, silent=True) or {}
         ch = _get_channels()
@@ -2134,7 +2447,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True})
 
     @app.route("/api/admin/notify/channels/<int:index>", methods=["DELETE"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_channel_delete(index):
         ch = _get_channels()
         if not (0 <= index < len(ch)):
@@ -2144,7 +2457,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True})
 
     @app.route("/api/admin/notify/offline")
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_offline():
         return jsonify([{
             "uuid": c["uuid"],
@@ -2155,7 +2468,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         } for c in store.list_clients()])
 
     @app.route("/api/admin/notify/offline/<client_uuid>", methods=["PUT"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_offline_update(client_uuid):
         data = request.get_json(force=True, silent=True) or {}
         fields = {}
@@ -2172,7 +2485,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True})
 
     @app.route("/api/admin/notify/traffic", methods=["GET"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_traffic_get():
         return jsonify([{
             "uuid": c["uuid"],
@@ -2182,7 +2495,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         } for c in store.list_clients()])
 
     @app.route("/api/admin/notify/traffic", methods=["PUT"])
-    @_require_admin
+    @_require_perm("notify")
     def admin_notify_traffic_put():
         data = request.get_json(force=True, silent=True) or {}
         if not isinstance(data, dict):
@@ -2202,12 +2515,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     # ---------------- 2FA ----------------
     @app.route("/api/admin/2fa")
-    @_require_admin
+    @_require_superadmin
     def admin_2fa_status():
         return jsonify({"enabled": (store.get_setting("totp_enabled", "0") or "0") == "1"})
 
     @app.route("/api/admin/2fa/setup", methods=["POST"])
-    @_require_admin
+    @_require_superadmin
     def admin_2fa_setup():
         secret = _new_totp_secret()
         session["totp_pending"] = secret
@@ -2217,7 +2530,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"secret": secret, "uri": uri})
 
     @app.route("/api/admin/2fa/enable", methods=["POST"])
-    @_require_admin
+    @_require_superadmin
     def admin_2fa_enable():
         data = request.get_json(force=True, silent=True) or {}
         secret = session.get("totp_pending")
@@ -2232,7 +2545,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"error": "验证码错误"}), 400
 
     @app.route("/api/admin/2fa/disable", methods=["POST"])
-    @_require_admin
+    @_require_superadmin
     def admin_2fa_disable():
         data = request.get_json(force=True, silent=True) or {}
         if not store.verify_admin(data.get("password", ""), store.get_admin_username()):
@@ -2243,7 +2556,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     # ---------------- 远程执行 ----------------
     @app.route("/api/admin/exec", methods=["POST"])
-    @_require_admin
+    @_require_perm("exec")
     def admin_exec():
         data = request.get_json(force=True, silent=True) or {}
         command = (data.get("command") or "").strip()
@@ -2257,7 +2570,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True, "task_ids": created})
 
     @app.route("/api/admin/exec/tasks")
-    @_require_admin
+    @_require_perm("exec")
     def admin_exec_tasks():
         try:
             limit = max(10, min(500, int(request.args.get("limit", 50))))
@@ -2271,7 +2584,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     # ---------------- 数据库维护 ----------------
     @app.route("/api/admin/db/info")
-    @_require_admin
+    @_require_perm("database")
     def admin_db_info():
         cur = store._conn.cursor()
         ping_n = cur.execute("SELECT COUNT(*) FROM ping_results").fetchone()[0]
@@ -2287,7 +2600,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         })
 
     @app.route("/api/admin/db/vacuum", methods=["POST"])
-    @_require_admin
+    @_require_perm("database")
     def admin_db_vacuum():
         res = store.vacuum()
         store.log_event("info", "db",
@@ -2390,7 +2703,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return data
 
     @app.route("/api/admin/theme/list")
-    @_require_admin
+    @_require_perm("themes")
     def admin_theme_list():
         active = _active_theme_short()
         themes = [{
@@ -2413,7 +2726,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"themes": themes, "active": active})
 
     @app.route("/api/admin/theme/upload", methods=["POST"])
-    @_require_admin
+    @_require_perm("themes")
     def admin_theme_upload():
         f = request.files.get("file")
         if not f:
@@ -2428,7 +2741,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True, "theme": info})
 
     @app.route("/api/admin/theme/import", methods=["POST"])
-    @_require_admin
+    @_require_perm("themes")
     def admin_theme_import():
         body = request.get_json(force=True, silent=True) or {}
         url = (body.get("url") or "").strip()
@@ -2445,7 +2758,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True, "theme": info})
 
     @app.route("/api/admin/theme/set")
-    @_require_admin
+    @_require_perm("themes")
     def admin_theme_set():
         short = (request.args.get("theme") or "").strip()
         if short != "default" and not _theme_manifest(short):
@@ -2454,7 +2767,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True, "theme": short})
 
     @app.route("/api/admin/theme/delete", methods=["POST"])
-    @_require_admin
+    @_require_perm("themes")
     def admin_theme_delete():
         body = request.get_json(force=True, silent=True) or {}
         short = (body.get("short") or "").strip()
@@ -2469,7 +2782,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True})
 
     @app.route("/api/admin/theme/settings", methods=["GET", "POST"])
-    @_require_admin
+    @_require_perm("themes")
     def admin_theme_settings():
         body = request.get_json(force=True, silent=True) if request.method == "POST" else {}
         short = ((request.args.get("theme") or (body or {}).get("theme")
@@ -2483,7 +2796,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return jsonify({"ok": True})
 
     @app.route("/api/admin/theme/preview/<short>")
-    @_require_admin
+    @_require_perm("themes")
     def admin_theme_preview(short):
         m = _theme_manifest(short)
         if not m:
@@ -2495,12 +2808,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     # ------------------------------------------------------------ admin skin
     @app.route("/api/admin/ip-info/v1/refresh", methods=["POST"])
-    @_require_admin
+    @_require_perm("servers")
     def api_ipinfo_refresh():
         return jsonify({"ok": False, "message": "IP 信息功能未启用"}), 503
 
     @app.route("/api/admin/ping")
-    @_require_admin
+    @_require_perm("ping")
     def api_admin_ping():
         # 主题期望裸数组 [{id, interval, name, loss, clients, type, target, weight}]
         tasks = store.list_ping_tasks() if hasattr(store, "list_ping_tasks") else []
@@ -2512,7 +2825,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         } for t in tasks])
 
     @app.route("/api/admin/client/list")
-    @_require_admin
+    @_require_perm("servers")
     def api_admin_client_list():
         # 主题期望裸数组 [{uuid, name, group, region, weight}]
         return jsonify([{
@@ -2560,7 +2873,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 "background": background}
 
     @app.route("/api/admin/skin", methods=["GET", "PUT"])
-    @_require_admin
+    @_require_perm("skin")
     def admin_skin():
         if request.method == "GET":
             return jsonify(_get_skin())
@@ -2598,7 +2911,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return ext if sig_ok else None
 
     @app.route("/api/admin/skin/background", methods=["GET", "POST", "DELETE"])
-    @_require_admin
+    @_require_perm("skin")
     def admin_skin_background():
         if request.method == "GET":
             p = _skin_bg_file()
@@ -2642,7 +2955,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     # ------------------------------------------------------------ 配置备份与恢复
     @app.route("/api/admin/backup", methods=["GET"])
-    @_require_admin
+    @_require_perm("settings")
     def admin_backup_download():
         payload = {
             "format": "bigcat-backup",
@@ -2658,7 +2971,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return resp
 
     @app.route("/api/admin/backup/restore", methods=["POST"])
-    @_require_admin
+    @_require_perm("settings")
     def admin_backup_restore():
         f = request.files.get("backup")
         if f is None:
