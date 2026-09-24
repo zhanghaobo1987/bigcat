@@ -136,14 +136,19 @@ class Storage:
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ping_results (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task_id    INTEGER NOT NULL,
-                    time       TEXT NOT NULL,
-                    latency_ms REAL DEFAULT 0,
-                    ok         INTEGER DEFAULT 0
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id     INTEGER NOT NULL,
+                    time        TEXT NOT NULL,
+                    latency_ms  REAL DEFAULT 0,
+                    ok          INTEGER DEFAULT 0,
+                    client_uuid TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            # v1.9.4 迁移：老库 ping_results 补 client_uuid 列（节点侧分布式探测结果归属）
+            cols = {r[1] for r in cur.execute("PRAGMA table_info(ping_results)").fetchall()}
+            if "client_uuid" not in cols:
+                cur.execute("ALTER TABLE ping_results ADD COLUMN client_uuid TEXT NOT NULL DEFAULT ''")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pingres_task_time ON ping_results(task_id, time)")
             cur.execute(
                 """
@@ -664,12 +669,18 @@ class Storage:
                 [(task_id, u) for u in uuids])
             self._conn.commit()
 
-    def insert_ping_result(self, task_id: int, latency_ms: float, ok: bool):
+    def insert_ping_result(self, task_id: int, latency_ms: float, ok: bool,
+                           client_uuid: str = ""):
+        """写入一条延迟探测结果。
+
+        client_uuid 为空表示主控侧探测；非空表示该节点 agent 自行探测的结果。
+        """
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with self._lock:
             self._conn.execute(
-                "INSERT INTO ping_results(task_id, time, latency_ms, ok) VALUES(?, ?, ?, ?)",
-                (task_id, now, latency_ms, 1 if ok else 0),
+                "INSERT INTO ping_results(task_id, time, latency_ms, ok, client_uuid)"
+                " VALUES(?, ?, ?, ?, ?)",
+                (task_id, now, latency_ms, 1 if ok else 0, client_uuid or ""),
             )
             self._conn.commit()
 

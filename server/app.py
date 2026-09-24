@@ -16,6 +16,7 @@ surface Komari themes expect:
   POST /api/agent/register            register a node, returns uuid+token
   POST /api/agent/report              agent metric report (token auth)
   POST /api/agent/basicinfo           agent static info (token auth)
+  GET  /api/agent/ping_tasks          ping tasks this node should probe (token auth)
 
   POST /api/admin/login               admin login
   *    /api/admin/...                 node management (admin auth)
@@ -854,6 +855,21 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 out.append(c)
         return out
 
+    def _ping_rows_for_node(task_id, node_uuid, since_iso, end_iso=None, limit=500):
+        """某节点某任务的探测行（v1.9.4 分布式探测）。
+
+        优先取该节点 agent 自行上报的行（client_uuid=节点 uuid）；
+        该节点无上报时回退到主控侧探测行（client_uuid=''），兼容未升级的 agent。
+        """
+        rows = store.ping_results(task_id, since_iso, limit=limit)
+        rows = [r for r in rows
+                if (end_iso is None or (r.get("time") or "") <= end_iso)
+                and _parse_time(r.get("time")) is not None]
+        own = [r for r in rows if (r.get("client_uuid") or "") == (node_uuid or "")]
+        if own:
+            return own
+        return [r for r in rows if not (r.get("client_uuid") or "")]
+
     def _pct(sorted_vals, p):
         """已排序序列的百分位数（线性插值）。"""
         if not sorted_vals:
@@ -895,34 +911,34 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             nodes = _ping_task_nodes(t, clients)
             if not nodes:
                 continue
-            rows = store.ping_results(t.get("id"), _iso(start), limit=row_limit)
-            rows = [r for r in rows if (r.get("time") or "") <= end_iso
-                    and _parse_time(r.get("time")) is not None]
-            if not rows:
-                continue
-            buckets = {}  # idx -> [total, ok_count, latency_sum]
-            for r in rows:
-                ts = _parse_time(r.get("time")).timestamp()
-                idx = int((ts - start_ts) / bucket)
-                idx = max(0, min(max_points - 1, idx))
-                b = buckets.setdefault(idx, [0, 0, 0.0])
-                b[0] += 1
-                lat = r.get("latency_ms")
-                if r.get("ok") and lat is not None:
-                    b[1] += 1
-                    b[2] += float(lat)
-            points = []
-            for idx in sorted(buckets):
-                total, okc, latsum = buckets[idx]
-                bt = _iso(start + timedelta(seconds=idx * bucket))
-                if metric_key == "ping.latency_ms":
-                    value = round(latsum / okc, 2) if okc else -1
-                else:  # ping.loss
-                    value = round((total - okc) / total * 100, 2) if total else 0.0
-                points.append({"time": bt, "value": value, "count": total})
-            if not points:
-                continue
             for n in nodes:
+                # v1.9.4：每个节点用自己的探测数据（agent 上报优先，主控探测回退）
+                rows = _ping_rows_for_node(t.get("id"), n.get("uuid"),
+                                            _iso(start), end_iso, row_limit)
+                if not rows:
+                    continue
+                buckets = {}  # idx -> [total, ok_count, latency_sum]
+                for r in rows:
+                    ts = _parse_time(r.get("time")).timestamp()
+                    idx = int((ts - start_ts) / bucket)
+                    idx = max(0, min(max_points - 1, idx))
+                    b = buckets.setdefault(idx, [0, 0, 0.0])
+                    b[0] += 1
+                    lat = r.get("latency_ms")
+                    if r.get("ok") and lat is not None:
+                        b[1] += 1
+                        b[2] += float(lat)
+                points = []
+                for idx in sorted(buckets):
+                    total, okc, latsum = buckets[idx]
+                    bt = _iso(start + timedelta(seconds=idx * bucket))
+                    if metric_key == "ping.latency_ms":
+                        value = round(latsum / okc, 2) if okc else -1
+                    else:  # ping.loss
+                        value = round((total - okc) / total * 100, 2) if total else 0.0
+                    points.append({"time": bt, "value": value, "count": total})
+                if not points:
+                    continue
                 series.append({
                     "metric_key": metric_key,
                     "entity_id": n.get("uuid"),
@@ -940,8 +956,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     def _ping_records_payload(uuid="", task_id="", hours="4"):
         """Komari 形状的延迟记录：{count, records[{task_id,time,value,client}], tasks}。
-        bigcat 的延迟探测是主控主动探测，不按节点区分；uuid 查询时仅返回
-        探测目标与该节点 IP 匹配的任务，没有匹配则返回空。"""
+        v1.9.4 起为分布式探测：每条记录归属实际执行探测的节点（agent 上报优先，
+        未上报的节点回退到主控探测数据）；uuid 查询时仅返回探测目标与该节点
+        IP 匹配的任务，没有匹配则返回空。"""
         try:
             h = max(1, min(_ping_preserve_hours(), int(hours)))
         except (TypeError, ValueError):
@@ -967,19 +984,22 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         for t in tasks:
             # uuid 查询时 client 直接用所查节点，保证主题按节点归并统计正确
             if uuid:
-                client_uuid = uuid
+                node_uuids = [uuid]
             else:
                 nodes = _ping_task_nodes(t, all_clients)
-                client_uuid = nodes[0].get("uuid") if nodes else ""
-            for r in store.ping_results(t.get("id"), since, limit=2000):
-                ok = bool(r.get("ok"))
-                lat = r.get("latency_ms")
-                records.append({
-                    "task_id": t.get("id"),
-                    "time": r.get("time"),
-                    "value": int(round(lat)) if (ok and lat is not None) else -1,
-                    "client": client_uuid,
-                })
+                node_uuids = [nodes[0].get("uuid")] if nodes else [""]
+            for node_uuid in node_uuids:
+                # v1.9.4：该节点的 agent 上报优先，无上报时回退主控探测数据
+                rows = _ping_rows_for_node(t.get("id"), node_uuid, since, limit=2000)
+                for r in rows:
+                    ok = bool(r.get("ok"))
+                    lat = r.get("latency_ms")
+                    records.append({
+                        "task_id": t.get("id"),
+                        "time": r.get("time"),
+                        "value": int(round(lat)) if (ok and lat is not None) else -1,
+                        "client": node_uuid,
+                    })
         records.sort(key=lambda r: r.get("time") or "")
         return {
             "count": len(records),
@@ -1018,33 +1038,34 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             nodes = _ping_task_nodes(t, clients)
             if not nodes:
                 continue
-            rows = store.ping_results(t.get("id"), _iso(start), limit=row_limit)
-            rows = [r for r in rows if (r.get("time") or "") <= end_iso]
-            total = len(rows)
-            oks = [float(r["latency_ms"]) for r in rows
-                   if r.get("ok") and r.get("latency_ms") is not None]
-            valid = len(oks)
-            loss = round((total - valid) / total * 100, 2) if total else 0.0
-            if oks:
-                srt = sorted(oks)
-                avg = sum(oks) / valid
-                p50 = _pct(srt, 50)
-                p99 = _pct(srt, 99)
-                var = sum((x - avg) ** 2 for x in oks) / valid
-                entry_stats = {
-                    "min": round(srt[0], 2), "max": round(srt[-1], 2),
-                    "avg": round(avg, 2), "latest": round(oks[-1], 2),
-                    "p50": round(p50, 2), "p99": round(p99, 2),
-                    "stddev": round(math.sqrt(var), 2),
-                    "p99_p50_ratio": round(p99 / p50, 4) if p50 else None,
-                }
-            else:
-                entry_stats = {
-                    "min": None, "max": None, "avg": None, "latest": None,
-                    "p50": None, "p99": None, "stddev": None,
-                    "p99_p50_ratio": None,
-                }
             for n in nodes:
+                # v1.9.4：每个节点用自己的探测数据（agent 上报优先，主控探测回退）
+                rows = _ping_rows_for_node(t.get("id"), n.get("uuid"),
+                                            _iso(start), end_iso, row_limit)
+                total = len(rows)
+                oks = [float(r["latency_ms"]) for r in rows
+                       if r.get("ok") and r.get("latency_ms") is not None]
+                valid = len(oks)
+                loss = round((total - valid) / total * 100, 2) if total else 0.0
+                if oks:
+                    srt = sorted(oks)
+                    avg = sum(oks) / valid
+                    p50 = _pct(srt, 50)
+                    p99 = _pct(srt, 99)
+                    var = sum((x - avg) ** 2 for x in oks) / valid
+                    entry_stats = {
+                        "min": round(srt[0], 2), "max": round(srt[-1], 2),
+                        "avg": round(avg, 2), "latest": round(oks[-1], 2),
+                        "p50": round(p50, 2), "p99": round(p99, 2),
+                        "stddev": round(math.sqrt(var), 2),
+                        "p99_p50_ratio": round(p99 / p50, 4) if p50 else None,
+                    }
+                else:
+                    entry_stats = {
+                        "min": None, "max": None, "avg": None, "latest": None,
+                        "p50": None, "p99": None, "stddev": None,
+                        "p99_p50_ratio": None,
+                    }
                 stats.append({
                     "task_id": t.get("id"),
                     "entity_id": n.get("uuid"),
@@ -1377,6 +1398,20 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         }
         store.insert_record(client["uuid"], rec)
         store.touch_client(client["uuid"])
+        # v1.9.4：节点侧分布式延迟探测结果（agent 自行探测后随上报回传）
+        try:
+            for pr in rep.get("ping_results") or []:
+                if pr.get("task_id") is None:
+                    continue
+                try:
+                    plat = round(float(pr.get("latency_ms", 0) or 0), 2)
+                except (TypeError, ValueError):
+                    plat = 0.0
+                store.insert_ping_result(int(pr["task_id"]), plat,
+                                         bool(pr.get("ok")),
+                                         client_uuid=client["uuid"])
+        except Exception:
+            pass
         # 离线/上线通知的状态变化检测 + 过期监控数据清理（无独立调度器，搭上报触发）
         try:
             _check_node_transitions()
@@ -1411,6 +1446,31 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             return jsonify({"error": "unauthorized"}), 401
         tasks = store.claim_exec_tasks(client["uuid"])
         return jsonify({"tasks": tasks})
+
+    @app.route("/api/agent/ping_tasks", methods=["GET"])
+    def agent_ping_tasks():
+        """agent 拉取应由本节点执行的延迟探测任务（v1.9.4+ 分布式探测）。
+
+        Komari 语义：任务未绑定 clients 时为全局任务，所有节点各自探测；
+        绑定了 clients 时仅被绑定的节点探测。"""
+        client = _agent_auth()
+        if not client:
+            return jsonify({"error": "unauthorized"}), 401
+        out = []
+        for t in store.list_ping_tasks():
+            if not t.get("enabled"):
+                continue
+            bound = store.get_ping_task_clients(t.get("id"))
+            if bound and client["uuid"] not in bound:
+                continue
+            out.append({
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "target": t.get("target"),
+                "type": t.get("type") or "tcp",
+                "interval_sec": max(30, int(t.get("interval_sec") or 300)),
+            })
+        return jsonify({"tasks": out})
 
     @app.route("/api/agent/task_result", methods=["POST"])
     def agent_task_result():

@@ -17,6 +17,7 @@ import fnmatch
 import json
 import os
 import platform
+import re
 import socket
 import ssl
 import subprocess
@@ -204,6 +205,90 @@ def poll_exec_tasks(server: str, token: str, insecure: bool = False):
                "ok": result["ok"]}, token=token, insecure=insecure)
 
 
+# ------------------------------------------------------------------ 分布式延迟探测
+# v1.9.4：agent 自行探测主控下发的 ping 任务（三网延迟等），结果随上报回传，
+# 主控按节点分别存储展示；未升级的 agent 由主控侧探测数据回退展示。
+PING_TASK_REFRESH_SEC = 60
+
+
+def _do_ping(task: dict):
+    """本地执行一次延迟探测，与主控侧 _do_ping 同语义：tcp/http/icmp。"""
+    target = (task.get("target") or "").strip()
+    typ = (task.get("type") or "tcp").lower()
+    t0 = time.time()
+    try:
+        if typ == "tcp":
+            host, _, port = target.partition(":")
+            port = int(port.strip() or 80)
+            s = socket.create_connection((host.strip(), port), timeout=5)
+            s.close()
+        elif typ == "http":
+            url = target if target.startswith("http") else "http://" + target
+            req = urllib.request.Request(url, headers={"User-Agent": "BigCat-ping/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp.read(1024)
+        elif typ == "icmp":
+            host = target.split(":")[0].split("/")[0].strip()
+            out = subprocess.run(["ping", "-c1", "-W2", host],
+                                 capture_output=True, text=True, timeout=12)
+            m = re.search(r"time[=<]([\d.]+)\s*ms", out.stdout)
+            if not m:
+                return 0.0, False
+            return float(m.group(1)), True
+        else:
+            return 0.0, False
+        return (time.time() - t0) * 1000.0, True
+    except Exception:
+        return 0.0, False
+
+
+class PingProber:
+    """延迟探测调度器：定期从主控拉取任务，按各自间隔本地探测，结果排队随上报回传。"""
+
+    def __init__(self):
+        self.tasks = []
+        self.next_run = {}
+        self.last_fetch = 0.0
+        self.pending = []
+
+    def maybe_refresh(self, server: str, token: str, insecure: bool = False):
+        now = time.time()
+        if now - self.last_fetch < PING_TASK_REFRESH_SEC:
+            return
+        self.last_fetch = now
+        try:
+            resp = _get(f"{server}/api/agent/ping_tasks", token=token,
+                        insecure=insecure)
+            tasks = resp.get("tasks") or []
+            self.tasks = tasks
+            # 任务变更时清掉已删除任务的调度
+            alive = {t.get("id") for t in tasks}
+            self.next_run = {tid: ts for tid, ts in self.next_run.items()
+                             if tid in alive}
+        except Exception as e:  # noqa: BLE001
+            print(f"[agent] ping tasks refresh failed: {e}")
+
+    def tick(self):
+        now = time.time()
+        for task in self.tasks:
+            tid = task.get("id")
+            if tid is None:
+                continue
+            if now < self.next_run.get(tid, 0):
+                continue
+            latency, ok = _do_ping(task)
+            self.pending.append({"task_id": tid,
+                                 "latency_ms": round(latency, 2),
+                                 "ok": bool(ok)})
+            interval = max(30, int(task.get("interval_sec") or 300))
+            self.next_run[tid] = now + interval
+
+    def drain(self):
+        out = self.pending
+        self.pending = []
+        return out
+
+
 def _get(url: str, token: str = "", timeout: int = 10,
          insecure: bool = False) -> dict:
     req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
@@ -384,9 +469,20 @@ def main():
     except Exception:
         pass
 
+    prober = PingProber()
+
     while True:
         try:
+            # 分布式延迟探测：拉取任务 -> 本地探测 -> 结果随上报回传（v1.9.4）
+            try:
+                prober.maybe_refresh(server, args.token, insecure=args.insecure)
+                prober.tick()
+            except Exception as e:  # noqa: BLE001
+                print(f"[agent] ping probe failed: {e}")
             report, prev_net = collect_report(prev_net, args)
+            ping_results = prober.drain()
+            if ping_results:
+                report["ping_results"] = ping_results
             _post(f"{server}/api/agent/report", {"report": report}, token=args.token,
                   insecure=args.insecure)
         except Exception as e:  # noqa: BLE001
