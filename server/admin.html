@@ -565,7 +565,7 @@
           <option value="quarterly">季付</option><option value="yearly">年付</option>
           <option value="one-time">一次性</option><option value="long-term">长期</option>
         </select></div>
-      <div><label>到期日期</label><input id="edit-expired" type="text" placeholder="2027-01-01"></div>
+      <div><label>到期日期</label><input id="edit-expired" type="date"></div>
     </div>
     <label class="row" style="justify-content:flex-start">
       <input id="edit-renew" type="checkbox" style="width:16px"> <span>自动续费</span></label>
@@ -1131,6 +1131,19 @@ function limitBytes() {
   if (!(v > 0)) return 0;
   return Math.round(v * parseInt($('edit-limit-unit').value));
 }
+// 把历史手输的到期日（YYYY/MM/DD、YYYY.MM.DD 等）规范成 date 输入框要的 YYYY-MM-DD
+function normDateInput(s) {
+  s = (s || '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  m = s.match(/^(\d{4})[/.](\d{1,2})[/.](\d{1,2})/);
+  if (m) {
+    const p = n => String(n).padStart(2, '0');
+    const y = +m[1], mo = +m[2], d = +m[3];
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return `${y}-${p(mo)}-${p(d)}`;
+  }
+  return '';
+}
 window.openEdit = uuid => {
   const c = nodesCache.find(x => x.uuid === uuid); if (!c) return;
   $('edit-uuid').value = c.uuid;
@@ -1140,7 +1153,7 @@ window.openEdit = uuid => {
   $('edit-price').value = c.price || '';
   setCurrency(c.currency || '');
   $('edit-cycle').value = c.billing_cycle || '';
-  $('edit-expired').value = (c.expired_at || '').slice(0, 10);
+  $('edit-expired').value = normDateInput(c.expired_at);
   $('edit-renew').checked = !!c.auto_renewal;
   setLimit(c.traffic_limit || 0, c.traffic_limit_type || 'sum');
   $('edit-grace').value = c.offline_grace || '';

@@ -41,7 +41,7 @@ import threading
 import time
 import ipaddress
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from importlib.metadata import version as _pkg_version
 
 from flask import Flask, Response, jsonify, request, send_from_directory, session
@@ -296,6 +296,33 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         except Exception:
             return None
 
+    def _parse_expiry_date(v):
+        """宽松解析到期日期。
+
+        后台到期日是手输文本框，除标准 YYYY-MM-DD 外还兼容
+        YYYY/MM/DD、YYYY.MM.DD（含时间后缀），解析失败返回 None
+        （调用方跳过该节点，而不是静默丢数）。
+        """
+        s = (v or "")
+        if not isinstance(s, str):
+            s = str(s)
+        s = s.strip()
+        if not s:
+            return None
+        if s.endswith(("Z", "z")):
+            s = s[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(s).date()
+        except Exception:
+            pass
+        m = re.match(r"^(\d{4})[/.](\d{1,2})[/.](\d{1,2})(?:[ T].*)?$", s)
+        if m:
+            try:
+                return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                return None
+        return None
+
     def _iso(dt: datetime) -> str:
         # 入库时间只到秒：查询边界也截断到秒，避免 "…16Z" > "…16.123456Z" 的字符串比较陷阱
         return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -538,12 +565,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             days = 10
         today = datetime.now(timezone.utc).date()
         for c in store.list_clients():
-            exp_s = (c.get("expired_at") or "").strip()
-            if not exp_s:
-                continue
-            try:
-                exp = datetime.fromisoformat(exp_s).date()
-            except Exception:
+            exp = _parse_expiry_date(c.get("expired_at"))
+            if exp is None:
                 continue
             delta = (exp - today).days
             if 0 <= delta <= days:
@@ -1646,12 +1669,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             d = dict(c)
             d["online"] = _is_online(c)
             d["days_to_expiry"] = None
-            exp_s = (c.get("expired_at") or "").strip()
-            if exp_s:
-                try:
-                    d["days_to_expiry"] = (datetime.fromisoformat(exp_s).date() - today).days
-                except Exception:
-                    pass
+            exp = _parse_expiry_date(c.get("expired_at"))
+            if exp is not None:
+                d["days_to_expiry"] = (exp - today).days
             out.append(d)
         return jsonify(out)
 
@@ -1734,13 +1754,10 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         today = datetime.now(timezone.utc).date()
         out = []
         for c in store.list_clients():
+            exp = _parse_expiry_date(c.get("expired_at"))
+            if exp is None:
+                continue
             exp_s = (c.get("expired_at") or "").strip()
-            if not exp_s:
-                continue
-            try:
-                exp = datetime.fromisoformat(exp_s).date()
-            except Exception:
-                continue
             delta = (exp - today).days
             if 0 <= delta <= within_days:
                 out.append({"uuid": c["uuid"], "name": c.get("name") or c["uuid"][:8],
