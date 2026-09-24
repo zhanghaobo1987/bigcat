@@ -516,18 +516,73 @@
     <label>备注</label><input id="edit-remark" type="text">
     <div class="form2">
       <div><label>价格</label><input id="edit-price" type="number" min="0" step="0.01"></div>
-      <div><label>货币</label><input id="edit-currency" type="text" placeholder="USD"></div>
+      <div><label>货币</label>
+        <select id="edit-currency">
+          <option value="">未设置</option>
+          <option value="CNY">CNY 人民币</option>
+          <option value="USD">USD 美元</option>
+          <option value="EUR">EUR 欧元</option>
+          <option value="GBP">GBP 英镑</option>
+          <option value="JPY">JPY 日元</option>
+          <option value="KRW">KRW 韩元</option>
+          <option value="HKD">HKD 港币</option>
+          <option value="TWD">TWD 新台币</option>
+          <option value="SGD">SGD 新加坡元</option>
+          <option value="AUD">AUD 澳大利亚元</option>
+          <option value="NZD">NZD 新西兰元</option>
+          <option value="CAD">CAD 加拿大元</option>
+          <option value="CHF">CHF 瑞士法郎</option>
+          <option value="SEK">SEK 瑞典克朗</option>
+          <option value="NOK">NOK 挪威克朗</option>
+          <option value="DKK">DKK 丹麦克朗</option>
+          <option value="PLN">PLN 波兰兹罗提</option>
+          <option value="CZK">CZK 捷克克朗</option>
+          <option value="HUF">HUF 匈牙利福林</option>
+          <option value="RUB">RUB 俄罗斯卢布</option>
+          <option value="UAH">UAH 乌克兰格里夫纳</option>
+          <option value="KZT">KZT 哈萨克斯坦坚戈</option>
+          <option value="TRY">TRY 土耳其里拉</option>
+          <option value="ILS">ILS 以色列谢克尔</option>
+          <option value="AED">AED 阿联酋迪拉姆</option>
+          <option value="SAR">SAR 沙特里亚尔</option>
+          <option value="QAR">QAR 卡塔尔里亚尔</option>
+          <option value="KWD">KWD 科威特第纳尔</option>
+          <option value="INR">INR 印度卢比</option>
+          <option value="THB">THB 泰铢</option>
+          <option value="MYR">MYR 马来西亚林吉特</option>
+          <option value="IDR">IDR 印尼盾</option>
+          <option value="PHP">PHP 菲律宾比索</option>
+          <option value="VND">VND 越南盾</option>
+          <option value="BRL">BRL 巴西雷亚尔</option>
+          <option value="MXN">MXN 墨西哥比索</option>
+          <option value="ZAR">ZAR 南非兰特</option>
+          <option value="NGN">NGN 尼日利亚奈拉</option>
+          <option value="EGP">EGP 埃及镑</option>
+        </select></div>
       <div><label>计费周期</label>
         <select id="edit-cycle">
           <option value="">未设置</option><option value="monthly">月付</option>
           <option value="quarterly">季付</option><option value="yearly">年付</option>
-          <option value="one-time">一次性</option>
+          <option value="one-time">一次性</option><option value="long-term">长期</option>
         </select></div>
       <div><label>到期日期</label><input id="edit-expired" type="text" placeholder="2027-01-01"></div>
     </div>
     <label class="row" style="justify-content:flex-start">
       <input id="edit-renew" type="checkbox" style="width:16px"> <span>自动续费</span></label>
-    <label>流量限额（GB，0 为不限）</label><input id="edit-limit" type="number" min="0" step="1">
+    <label>流量限额（0 为不限）</label>
+    <div class="form2" style="grid-template-columns:1fr 1fr 1fr">
+      <div><select id="edit-limit-type">
+        <option value="sum">出入流量总和</option>
+        <option value="down">入站流量</option>
+        <option value="up">出站流量</option>
+      </select></div>
+      <div><input id="edit-limit" type="number" min="0" step="0.01" placeholder="数值"></div>
+      <div><select id="edit-limit-unit">
+        <option value="1073741824">G</option>
+        <option value="1048576">M</option>
+        <option value="1099511627776">T</option>
+      </select></div>
+    </div>
     <label>离线宽限（秒，0 为使用全局设置）</label><input id="edit-grace" type="number" min="0" step="10">
     <div class="form2">
       <div><label class="row" style="justify-content:flex-start">
@@ -1047,6 +1102,35 @@ window.delNode = async (uuid, name) => {
   await api('/api/admin/client/' + uuid, 'DELETE');
   loadNodes();
 };
+// 货币下拉回填：列表外的值（如旧数据 "$"）自动追加保留
+function setCurrency(val) {
+  const sel = $('edit-currency');
+  let opt = sel.querySelector('option[value="' + val + '"]');
+  if (!opt && val) {
+    opt = document.createElement('option');
+    opt.value = val; opt.textContent = val;
+    sel.appendChild(opt);
+  }
+  sel.value = val || '';
+}
+// 字节数回填为 数值+单位（优先选整除单位，否则选最大可用单位保留 2 位小数）
+function setLimit(bytes, type) {
+  $('edit-limit-type').value = type || 'sum';
+  if (!bytes || bytes <= 0) { $('edit-limit').value = ''; $('edit-limit-unit').value = '1073741824'; return; }
+  const units = [['1099511627776', 1099511627776], ['1073741824', 1073741824], ['1048576', 1048576]];
+  for (const [uv, m] of units) {
+    if (bytes >= m && bytes % m === 0) { $('edit-limit-unit').value = uv; $('edit-limit').value = bytes / m; return; }
+  }
+  for (const [uv, m] of units) {
+    if (bytes >= m) { $('edit-limit-unit').value = uv; $('edit-limit').value = Math.round(bytes / m * 100) / 100; return; }
+  }
+  $('edit-limit-unit').value = '1048576'; $('edit-limit').value = Math.round(bytes / 1048576 * 100) / 100;
+}
+function limitBytes() {
+  const v = parseFloat($('edit-limit').value);
+  if (!(v > 0)) return 0;
+  return Math.round(v * parseInt($('edit-limit-unit').value));
+}
 window.openEdit = uuid => {
   const c = nodesCache.find(x => x.uuid === uuid); if (!c) return;
   $('edit-uuid').value = c.uuid;
@@ -1054,11 +1138,11 @@ window.openEdit = uuid => {
   $('edit-group').value = c.group || '';
   $('edit-remark').value = c.remark || '';
   $('edit-price').value = c.price || '';
-  $('edit-currency').value = c.currency || '';
+  setCurrency(c.currency || '');
   $('edit-cycle').value = c.billing_cycle || '';
   $('edit-expired').value = (c.expired_at || '').slice(0, 10);
   $('edit-renew').checked = !!c.auto_renewal;
-  $('edit-limit').value = c.traffic_limit ? (c.traffic_limit / 1073741824) : '';
+  setLimit(c.traffic_limit || 0, c.traffic_limit_type || 'sum');
   $('edit-grace').value = c.offline_grace || '';
   $('edit-hidden').checked = !!c.hidden;
   $('edit-noff').checked = c.notify_offline !== 0;
@@ -1068,17 +1152,17 @@ window.openEdit = uuid => {
 $('btn-edit-cancel').onclick = closeModals;
 $('btn-edit-save').onclick = async () => {
   const uuid = $('edit-uuid').value;
-  const limGB = parseFloat($('edit-limit').value);
   const {status, data} = await api('/api/admin/client/' + uuid, 'POST', {
     name: $('edit-name').value.trim(),
     group: $('edit-group').value.trim(),
     remark: $('edit-remark').value.trim(),
     price: parseFloat($('edit-price').value) || 0,
-    currency: $('edit-currency').value.trim(),
+    currency: $('edit-currency').value,
     billing_cycle: $('edit-cycle').value,
     expired_at: $('edit-expired').value.trim(),
     auto_renewal: $('edit-renew').checked ? 1 : 0,
-    traffic_limit: limGB > 0 ? Math.round(limGB * 1073741824) : 0,
+    traffic_limit: limitBytes(),
+    traffic_limit_type: $('edit-limit-type').value,
     offline_grace: parseInt($('edit-grace').value) || 0,
     hidden: $('edit-hidden').checked ? 1 : 0,
     notify_offline: $('edit-noff').checked ? 1 : 0,

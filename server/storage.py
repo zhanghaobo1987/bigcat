@@ -57,6 +57,7 @@ class Storage:
                     tags            TEXT DEFAULT '',
                     hidden          INTEGER DEFAULT 0,
                     traffic_limit   INTEGER DEFAULT 0,
+                    traffic_limit_type TEXT DEFAULT '',
                     created_at      TEXT NOT NULL,
                     updated_at      TEXT NOT NULL,
                     last_report_at  TEXT
@@ -233,6 +234,7 @@ class Storage:
                 "notify_offline": "INTEGER DEFAULT 1",
                 "report_enabled": "INTEGER DEFAULT 0",
                 "report_types": "TEXT DEFAULT 'daily,weekly,monthly'",
+                "traffic_limit_type": "TEXT DEFAULT ''",
             }.items():
                 if col not in cols:
                     self._conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {ddl}")
@@ -294,6 +296,7 @@ class Storage:
             "public_remark", "mem_total", "swap_total", "disk_total", "version",
             "weight", "price", "billing_cycle", "auto_renewal", "currency",
             "expired_at", "group", "tags", "hidden", "traffic_limit",
+            "traffic_limit_type",
             "offline_grace", "notify_offline", "report_enabled", "report_types",
         }
         sets, vals = [], []
