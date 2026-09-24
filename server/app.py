@@ -236,9 +236,49 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             v = 4320
         return max(24, min(8760, v))
 
+    # 前台首页底部快捷链接：serve-time 注入，与主题无关（换主题不丢失）。
+    _CRYPTO_LINK_SNIPPET = (
+        '<div id="bigcat-crypto-link" style="text-align:center;padding:16px 12px 20px;'
+        'font-size:13px;color:#8b949e;">'
+        '<a href="/crypto" target="_blank" rel="noopener" '
+        'style="color:#58a6ff;text-decoration:none;">\U0001f4c8 加密货币快捷链接</a>'
+        "</div>"
+    )
+    _INDEX_PATCH_CACHE = {}  # (theme_short, mtime_ns) -> patched html | None
+
+    def _patched_index_html():
+        """返回注入了底部快捷链接的首页 HTML；无需注入/注入不适用时返回 None。"""
+        dist = _active_theme_dist()
+        full = os.path.join(dist, "index.html")
+        try:
+            st = os.stat(full)
+        except OSError:
+            return None
+        key = (_active_theme_short(), st.st_mtime_ns)
+        if key in _INDEX_PATCH_CACHE:
+            return _INDEX_PATCH_CACHE[key]
+        try:
+            with open(full, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            _INDEX_PATCH_CACHE[key] = None
+            return None
+        if "</body>" in text and "bigcat-crypto-link" not in text:
+            text = text.replace("</body>", _CRYPTO_LINK_SNIPPET + "</body>", 1)
+        _INDEX_PATCH_CACHE[key] = text
+        return text
+
     @app.route("/")
     def index():
+        patched = _patched_index_html()
+        if patched is not None:
+            return Response(patched, mimetype="text/html")
         return send_from_directory(_active_theme_dist(), "index.html")
+
+    @app.route("/crypto")
+    def crypto_monitor():
+        # 加密货币实时监控单页（BTC / XCRCL 买卖盘），与前台主题无关
+        return send_from_directory(app.config["static_dir"], "crypto.html")
 
     @app.route("/assets/<path:p>")
     def assets(p):
