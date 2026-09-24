@@ -28,7 +28,11 @@
   .swatch.sel { border-color:var(--text); }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
-         font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+       font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  /* 自定义背景图时由 applySkin() 内联设置 background-image */
+  body.skin-has-bg { background-size:cover; background-position:center; background-attachment:fixed; }
+  .skin-bg-preview { width:100%; max-width:320px; height:120px; object-fit:cover; border-radius:8px;
+    border:1px solid var(--border); background:var(--code-bg); display:block; margin-top:8px; }
   .layout { display:flex; min-height:100vh; }
   aside { width:220px; flex-shrink:0; background:var(--code-bg); border-right:1px solid var(--border);
           padding:20px 12px; position:sticky; top:0; height:100vh; overflow-y:auto; }
@@ -472,6 +476,16 @@
           <input type="color" id="skin-accent" value="#2f81f7" style="width:46px;height:34px;padding:2px">
           <span class="muted" id="skin-accent-val">#2f81f7</span>
         </div>
+        <label style="margin-top:14px">背景图片 <span class="muted">（PNG/JPG/GIF/WebP，不超过 5MB）</span></label>
+        <div class="row" style="align-items:center">
+          <input type="file" id="skin-bg-file" accept="image/png,image/jpeg,image/gif,image/webp" style="max-width:260px">
+          <button class="ghost" id="btn-skin-bg-upload">上传背景</button>
+          <button class="ghost danger" id="btn-skin-bg-del">删除背景</button>
+        </div>
+        <img id="skin-bg-preview" class="skin-bg-preview hidden" alt="背景预览">
+        <label style="margin-top:14px">背景遮罩浓度 <span class="muted" id="skin-bg-dim-val">55%</span></label>
+        <input type="range" id="skin-bg-dim" min="0" max="85" value="55" style="max-width:320px">
+        <p class="muted" style="font-size:12px">遮罩越浓，背景图越暗，文字越清晰。</p>
         <div class="ok" id="skin-ok"></div><div class="err" id="skin-err"></div>
         <button id="btn-save-skin" style="margin-top:12px">保存外观</button>
       </div>
@@ -1764,10 +1778,22 @@ function applySkin(skin) {
   skin = skin || {};
   const mode = skin.mode === 'light' ? 'light' : 'dark';
   const accent = /^#[0-9a-fA-F]{6}$/.test(skin.accent || '') ? skin.accent : '#2f81f7';
+  let bgDim = parseFloat(skin.bg_dim);
+  if (!(bgDim >= 0)) bgDim = 0.55;
+  bgDim = Math.max(0, Math.min(0.85, bgDim));
+  const bg = skin.background || '';
   document.documentElement.dataset.skinMode = mode;
   document.documentElement.style.setProperty('--accent', accent);
-  try { localStorage.setItem('bigcat-skin', JSON.stringify({mode, accent})); } catch(e) {}
-  return {mode, accent};
+  if (bg) {
+    const overlay = mode === 'light' ? `rgba(255,255,255,${bgDim})` : `rgba(5,8,13,${bgDim})`;
+    document.body.classList.add('skin-has-bg');
+    document.body.style.backgroundImage = `linear-gradient(${overlay},${overlay}), url("${bg}")`;
+  } else {
+    document.body.classList.remove('skin-has-bg');
+    document.body.style.backgroundImage = '';
+  }
+  try { localStorage.setItem('bigcat-skin', JSON.stringify({mode, accent, bg_dim: bgDim, background: bg})); } catch(e) {}
+  return {mode, accent, bg_dim: bgDim, background: bg};
 }
 try {
   const cached = JSON.parse(localStorage.getItem('bigcat-skin') || 'null');
@@ -1789,14 +1815,60 @@ async function loadSkin() {
   $('skin-accent').value = skin.accent;
   $('skin-accent-val').textContent = skin.accent;
   buildSwatches(skin.accent);
+  setSkinBgPreview(skin.background);
+  $('skin-bg-dim').value = Math.round(skin.bg_dim * 100);
+  $('skin-bg-dim-val').textContent = Math.round(skin.bg_dim * 100) + '%';
 }
+function setSkinBgPreview(url) {
+  const img = $('skin-bg-preview');
+  if (url) { img.src = url; img.classList.remove('hidden'); }
+  else { img.removeAttribute('src'); img.classList.add('hidden'); }
+}
+/* 遮罩浓度拖动时实时预览（保存后才持久化） */
+$('skin-bg-dim').oninput = e => {
+  const v = Math.max(0, Math.min(85, parseInt(e.target.value) || 0));
+  $('skin-bg-dim-val').textContent = v + '%';
+  try {
+    const cached = JSON.parse(localStorage.getItem('bigcat-skin') || 'null') || {};
+    cached.bg_dim = v / 100;
+    applySkin(cached);
+  } catch(err) {}
+};
+$('btn-skin-bg-upload').onclick = async () => {
+  $('skin-ok').textContent = ''; $('skin-err').textContent = '';
+  const file = $('skin-bg-file').files[0];
+  if (!file) { $('skin-err').textContent = '请先选择图片文件'; return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  const r = await fetch('/api/admin/skin/background', {method: 'POST', credentials: 'same-origin', body: fd});
+  let d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (r.status === 401) return needLogin();
+  if (r.ok && d.ok) {
+    const skin = applySkin(d.skin);
+    setSkinBgPreview(skin.background);
+    $('skin-bg-file').value = '';
+    $('skin-ok').textContent = '背景图已上传并生效';
+  } else $('skin-err').textContent = (d && d.error) || '上传失败';
+};
+$('btn-skin-bg-del').onclick = async () => {
+  $('skin-ok').textContent = ''; $('skin-err').textContent = '';
+  const {status, data} = await api('/api/admin/skin/background', 'DELETE');
+  if (status === 401) return needLogin();
+  if (status === 200 && data.ok) {
+    applySkin(data.skin);
+    setSkinBgPreview('');
+    $('skin-ok').textContent = '背景图已删除';
+  } else $('skin-err').textContent = (data && data.error) || '删除失败';
+};
 $('skin-accent').oninput = e => { $('skin-accent-val').textContent = e.target.value; buildSwatches(e.target.value); };
 LOADERS.skin = loadSkin;
 $('btn-save-skin').onclick = async () => {
   $('skin-ok').textContent = ''; $('skin-err').textContent = '';
   const checked = document.querySelector('input[name="skin-mode"]:checked');
   const {status, data} = await api('/api/admin/skin', 'PUT',
-    {mode: checked ? checked.value : 'dark', accent: $('skin-accent').value});
+    {mode: checked ? checked.value : 'dark', accent: $('skin-accent').value,
+     bg_dim: (parseInt($('skin-bg-dim').value) || 0) / 100});
   if (status === 401) return needLogin();
   if (status === 200 && data.ok) { applySkin(data.skin); $('skin-ok').textContent = '已保存，配色已生效'; }
   else $('skin-err').textContent = (data && data.error) || '保存失败';

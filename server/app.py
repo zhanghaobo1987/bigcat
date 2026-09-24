@@ -2522,6 +2522,21 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         } for c in store.list_clients()])
 
     _SKIN_ACCENT_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+    _SKIN_BG_MAX_SIZE = 5 << 20  # 背景图上限 5MB
+    _SKIN_BG_EXTS = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp",
+    }
+    SKIN_DIR = os.path.join(os.path.dirname(os.path.abspath(db_path)), "skin")
+    os.makedirs(SKIN_DIR, exist_ok=True)
+
+    def _skin_bg_file():
+        """返回已上传的背景图路径（任意允许的扩展名），没有则返回 None。"""
+        for ext in _SKIN_BG_EXTS:
+            p = os.path.join(SKIN_DIR, "background" + ext)
+            if os.path.isfile(p):
+                return p
+        return None
 
     def _get_skin():
         try:
@@ -2532,7 +2547,17 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         accent = skin.get("accent")
         if not _SKIN_ACCENT_RE.match(str(accent or "")):
             accent = "#2f81f7"
-        return {"mode": mode, "accent": accent}
+        try:
+            bg_dim = float(skin.get("bg_dim", 0.55))
+        except (TypeError, ValueError):
+            bg_dim = 0.55
+        bg_dim = max(0.0, min(0.85, bg_dim))
+        bg_version = skin.get("bg_version", 0) or 0
+        background = ""
+        if _skin_bg_file():
+            background = f"/api/admin/skin/background?v={bg_version}"
+        return {"mode": mode, "accent": accent, "bg_dim": bg_dim,
+                "background": background}
 
     @app.route("/api/admin/skin", methods=["GET", "PUT"])
     @_require_admin
@@ -2544,9 +2569,76 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         accent = str(body.get("accent") or "")
         if not _SKIN_ACCENT_RE.match(accent):
             return jsonify({"error": "强调色格式无效（需 #rrggbb）"}), 400
-        skin = {"mode": mode, "accent": accent}
+        try:
+            raw = json.loads(store.get_setting("admin_skin", "") or "") or {}
+        except Exception:
+            raw = {}
+        try:
+            bg_dim = max(0.0, min(0.85, float(body.get("bg_dim", raw.get("bg_dim", 0.55)))))
+        except (TypeError, ValueError):
+            bg_dim = 0.55
+        skin = {"mode": mode, "accent": accent, "bg_dim": bg_dim,
+                "bg_version": raw.get("bg_version", 0) or 0}
         store.set_setting("admin_skin", json.dumps(skin))
-        return jsonify({"ok": True, "skin": skin})
+        return jsonify({"ok": True, "skin": _get_skin()})
+
+    def _valid_skin_bg(data: bytes, filename: str):
+        """校验上传的背景图：扩展名白名单 + 文件头魔数 + 大小。"""
+        if not data or len(data) > _SKIN_BG_MAX_SIZE:
+            return None
+        ext = os.path.splitext(filename or "")[1].lower()
+        if ext not in _SKIN_BG_EXTS:
+            return None
+        sig_ok = (
+            data.startswith(b"\x89PNG\r\n\x1a\n") or
+            data.startswith(b"\xff\xd8\xff") or
+            data.startswith(b"GIF87a") or data.startswith(b"GIF89a") or
+            (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+        )
+        return ext if sig_ok else None
+
+    @app.route("/api/admin/skin/background", methods=["GET", "POST", "DELETE"])
+    @_require_admin
+    def admin_skin_background():
+        if request.method == "GET":
+            p = _skin_bg_file()
+            if not p:
+                return jsonify({"error": "未上传背景图"}), 404
+            ext = os.path.splitext(p)[1].lower()
+            return app.response_class(
+                open(p, "rb").read(), mimetype=_SKIN_BG_EXTS.get(ext, "image/png"))
+        if request.method == "DELETE":
+            p = _skin_bg_file()
+            if p:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            return jsonify({"ok": True, "skin": _get_skin()})
+        # POST: multipart 上传
+        f = request.files.get("file")
+        if not f:
+            return jsonify({"error": "请选择图片文件"}), 400
+        data = f.read()
+        ext = _valid_skin_bg(data, f.filename or "")
+        if not ext:
+            return jsonify({"error": "仅支持 PNG/JPG/GIF/WebP，且不超过 5MB"}), 400
+        for e in _SKIN_BG_EXTS:  # 清理旧扩展名的残留
+            old = os.path.join(SKIN_DIR, "background" + e)
+            if os.path.isfile(old):
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
+        with open(os.path.join(SKIN_DIR, "background" + ext), "wb") as fh:
+            fh.write(data)
+        try:
+            raw = json.loads(store.get_setting("admin_skin", "") or "") or {}
+        except Exception:
+            raw = {}
+        raw["bg_version"] = int(raw.get("bg_version", 0) or 0) + 1
+        store.set_setting("admin_skin", json.dumps(raw))
+        return jsonify({"ok": True, "skin": _get_skin()})
 
     # ------------------------------------------------------------ 配置备份与恢复
     @app.route("/api/admin/backup", methods=["GET"])
