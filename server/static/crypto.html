@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>BTC 实时买卖监控</title>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --card2:#1c2330; --line:#2a3342;
+    --txt:#e6edf3; --dim:#8b949e; --green:#26a69a; --red:#ef5350;
+    --green-dim:rgba(38,166,154,.18); --red-dim:rgba(239,83,80,.18);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; background:var(--bg); color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:860px; margin:0 auto; padding:12px 12px 28px;}
+  header{display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:10px;}
+  .price-box{display:flex; align-items:baseline; gap:10px;}
+  #price{font-size:34px; font-weight:800; font-variant-numeric:tabular-nums;}
+  #price.up{color:var(--green);} #price.down{color:var(--red);}
+  #chg{font-size:13px; color:var(--dim);}
+  .controls{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .seg{display:flex; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  .seg button{border:0; background:transparent; color:var(--dim); padding:7px 12px; font-size:13px; cursor:pointer;}
+  .seg button.on{background:var(--card2); color:var(--txt); font-weight:700;}
+  #status{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim);}
+  #dot{width:9px; height:9px; border-radius:50%; background:#6e7681;}
+  #dot.ok{background:var(--green); box-shadow:0 0 6px var(--green);}
+  #dot.bad{background:var(--red); box-shadow:0 0 6px var(--red);}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px;}
+  .card h2{margin:0 0 4px; font-size:15px; font-weight:700;}
+  .card .sub{font-size:12px; color:var(--dim); margin-bottom:12px;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .stat{background:var(--card2); border-radius:10px; padding:10px 12px;}
+  .stat .k{font-size:12px; color:var(--dim); margin-bottom:4px;}
+  .stat .v{font-size:20px; font-weight:800; font-variant-numeric:tabular-nums;}
+  .stat .v small{font-size:12px; font-weight:400; color:var(--dim);}
+  .buy{color:var(--green);} .sell{color:var(--red);}
+  .diff-line{margin-top:10px; font-size:14px; font-weight:700; text-align:center;
+    background:var(--card2); border-radius:10px; padding:10px;}
+  .bar{height:14px; border-radius:7px; background:var(--red-dim); overflow:hidden; margin-top:10px; position:relative;}
+  .bar > div{height:100%; background:var(--green); transition:width .3s;}
+  .bar-label{display:flex; justify-content:space-between; font-size:12px; color:var(--dim); margin-top:4px;}
+  .wall{margin-top:10px; font-size:13px; background:var(--card2); border-radius:10px; padding:10px 12px; line-height:1.7;}
+  .wall b{font-variant-numeric:tabular-nums;}
+  canvas{width:100%; height:90px; display:block; background:var(--card2); border-radius:10px; margin-top:10px;}
+  .legend{display:flex; gap:14px; font-size:12px; color:var(--dim); margin-top:6px;}
+  .legend i{display:inline-block; width:14px; height:3px; border-radius:2px; vertical-align:middle; margin-right:4px;}
+  footer{font-size:12px; color:var(--dim); text-align:center; line-height:1.8; margin-top:6px;}
+  #reconnect{border:1px solid var(--line); background:var(--card); color:var(--txt);
+    border-radius:10px; padding:7px 12px; font-size:13px; cursor:pointer;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="price-box">
+        <span id="price">—</span>
+        <span id="chg"></span>
+      </div>
+      <div id="levels" style="font-size:12px;color:var(--dim);margin-top:2px;display:none"></div>
+    </div>
+    <div class="controls">
+      <div class="seg" id="symSeg">
+        <button data-s="BTC" class="on">BTC</button>
+        <button data-s="XCRCL">XCRCL</button>
+      </div>
+      <div class="seg" id="venueSeg">
+        <button data-v="okx-perp" class="on">OKX 永续</button>
+        <button data-v="okx-spot">OKX 现货</button>
+        <button data-v="binance">Binance 现货</button>
+      </div>
+      <div class="seg" id="winSeg">
+        <button data-w="30">30秒</button>
+        <button data-w="60" class="on">60秒</button>
+        <button data-w="300">5分钟</button>
+      </div>
+      <div id="status"><span id="dot"></span><span id="statusTxt">连接中…</span></div>
+      <button id="reconnect">重连</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>📊 实时挂单（盘口深度）</h2>
+    <div class="sub" id="bookSub">全盘深度 · 每 0.5 秒刷新显示</div>
+    <div class="grid">
+      <div class="stat"><div class="k">买单总量</div><div class="v buy" id="bBidV">—</div></div>
+      <div class="stat"><div class="k">卖单总量</div><div class="v sell" id="bAskV">—</div></div>
+      <div class="stat"><div class="k">买一 / 卖一</div><div class="v" id="bTop" style="font-size:15px">—</div></div>
+      <div class="stat"><div class="k">买卖价差</div><div class="v" id="bSpread" style="font-size:15px">—</div></div>
+    </div>
+    <div class="diff-line" id="bDiff">—</div>
+    <div class="bar"><div id="bBar" style="width:50%"></div></div>
+    <div class="bar-label"><span>买方 <b id="bBuyPct">—</b></span><span>卖方 <b id="bSellPct">—</b></span></div>
+    <div class="wall" id="walls">正在加载盘口…</div>
+    <canvas id="chartBook" width="800" height="90"></canvas>
+    <div class="legend"><span><i style="background:#58a6ff"></i>挂单买方占比%</span></div>
+  </div>
+
+  <div class="card">
+    <h2>⚡ 实时成交（主动买卖）</h2>
+    <div class="sub" id="tradeSub">统计窗口：最近 60 秒 · 数据随行情推送实时累积，每 0.5 秒刷新显示</div>
+    <div class="grid">
+      <div class="stat"><div class="k">主动买入笔数</div><div class="v buy" id="tBuyN">—</div></div>
+      <div class="stat"><div class="k">主动卖出笔数</div><div class="v sell" id="tSellN">—</div></div>
+      <div class="stat"><div class="k">主动买入量</div><div class="v buy" id="tBuyV">—</div></div>
+      <div class="stat"><div class="k">主动卖出量</div><div class="v sell" id="tSellV">—</div></div>
+    </div>
+    <div class="diff-line" id="tDiff">—</div>
+    <div class="bar"><div id="tBar" style="width:50%"></div></div>
+    <div class="bar-label"><span>买方 <b id="tBuyPct">—</b></span><span>卖方 <b id="tSellPct">—</b></span></div>
+    <canvas id="chartTrade" width="800" height="90"></canvas>
+    <div class="legend"><span><i style="background:var(--green)"></i>成交买方占比%</span></div>
+  </div>
+
+  <footer>
+    数据来源：交易所公开行情接口（OKX / Binance），无需登录 · 仅供参考，不构成投资建议<br>
+    页面直连交易所，数据每 0.5 秒刷新一次
+  </footer>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const SYM = {
+  BTC:   { pxDec: 1, volDec: 3, wallQty: 50,  sup: null, res: null },
+  XCRCL: { pxDec: 2, volDec: 2, wallQty: 500, sup: 91.5, res: 94.6 },
+};
+const state = {
+  venue: "okx-perp",
+  symbol: "BTC",
+  windowSec: 60,
+  trades: [],            // {t, buy:boolean, qty}
+  bids: new Map(), asks: new Map(),  // price(str) -> qty(BTC)
+  price: 0, prevPrice: 0,
+  ctVal: 0.01,           // OKX 合约面值，启动时自动获取
+  ws: null, wsOk: false, retryDelay: 2000,
+  hist: [],              // {t, tradePct, bookPct}
+  okxHosts: ["wss://ws.okx.com:8443/ws/v5/public", "wss://wsaws.okx.com:8443/ws/v5/public"],
+  okxHostIdx: 0,
+  binHosts: ["wss://data-stream.binance.vision", "wss://stream.binance.com:9443"],
+  binHostIdx: 0,
+  tick: 0,
+};
+const fmt = (n, d=2) => n.toLocaleString("en-US",{minimumFractionDigits:d, maximumFractionDigits:d});
+const instId  = () => state.symbol === "XCRCL" ? "XCRCL-USDT" : (state.venue === "okx-spot" ? "BTC-USDT" : "BTC-USDT-SWAP");
+const qtyMult = () => (state.symbol === "BTC" && state.venue === "okx-perp") ? state.ctVal : 1;
+const C = () => SYM[state.symbol];
+
+/* ---------- OKX ---------- */
+function okxConnect(){
+  const url = state.okxHosts[state.okxHostIdx];
+  setStatus("连接中… (" + url.replace("wss://","").split("/")[0] + ")", false);
+  const ws = new WebSocket(url);
+  state.ws = ws;
+  ws.onopen = () => {
+    state.retryDelay = 2000;
+    ws.send(JSON.stringify({op:"subscribe", args:[
+      {channel:"trades", instId:instId()},
+      {channel:"books", instId:instId()},
+      {channel:"tickers", instId:instId()},
+    ]}));
+    setStatus("已连接 · OKX" + (state.venue === "okx-spot" ? "现货" : "永续"), true);
+    state.wsOk = true;
+  };
+  ws.onmessage = ev => {
+    let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
+    if(m.event === "error"){ setStatus("订阅错误: " + (m.msg||""), false); return; }
+    if(!m.arg) return;
+    const ch = m.arg.channel;
+    if(ch === "trades" && m.data){
+      for(const t of m.data){
+        const qty = parseFloat(t.sz) * qtyMult();
+        state.trades.push({t: parseInt(t.ts), buy: t.side === "buy", qty});
+        setPrice(parseFloat(t.px));
+      }
+    }else if(ch === "books" && m.data){
+      for(const b of m.data) applyBook(b, v => v * qtyMult());
+    }else if(ch === "tickers" && m.data && m.data[0]){
+      setPrice(parseFloat(m.data[0].last));
+    }
+  };
+  const dead = () => {
+    if(state.ws !== ws) return;
+    state.wsOk = false;
+    try{ ws.close(); }catch(e){}
+    if(!state.venue.startsWith("okx")) return;
+    state.okxHostIdx = (state.okxHostIdx + 1) % state.okxHosts.length;
+    setStatus("断线，" + (state.retryDelay/1000) + "s 后重连…", false);
+    setTimeout(() => { if(state.venue.startsWith("okx")) okxConnect(); }, state.retryDelay);
+    state.retryDelay = Math.min(state.retryDelay * 2, 30000);
+  };
+  ws.onclose = dead; ws.onerror = dead;
+}
+function applyBook(b, conv){
+  if(!b.asks || !b.bids) return;
+  const upd = (map, arr) => { for(const l of arr){ const q = conv(parseFloat(l[1])); if(q === 0) map.delete(l[0]); else map.set(l[0], q); } };
+  // OKX books 频道：首次是全量 snapshot，之后是增量 update；用 action 区分更稳
+  upd(state.asks, b.asks); upd(state.bids, b.bids);
+}
+
+/* ---------- Binance ---------- */
+function binConnect(){
+  const host = state.binHosts[state.binHostIdx];
+  const url = host + "/stream?streams=btcusdt@aggTrade/btcusdt@depth20@500ms";
+  setStatus("连接中… (Binance " + host.replace("wss://","") + ")", false);
+  const ws = new WebSocket(url);
+  state.ws = ws;
+  ws.onopen = () => { state.retryDelay = 2000; setStatus("已连接 · Binance", true); state.wsOk = true; };
+  ws.onmessage = ev => {
+    let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
+    const d = m.data; if(!d) return;
+    if(d.e === "aggTrade"){
+      const qty = parseFloat(d.q);
+      state.trades.push({t: d.T, buy: d.m === false, qty});
+      setPrice(parseFloat(d.p));
+    }else if(d.bids && d.asks){
+      state.bids.clear(); state.asks.clear();
+      for(const l of d.bids) state.bids.set(l[0], parseFloat(l[1]));
+      for(const l of d.asks) state.asks.set(l[0], parseFloat(l[1]));
+    }
+  };
+  const dead = () => {
+    if(state.ws !== ws) return;
+    state.wsOk = false;
+    try{ ws.close(); }catch(e){}
+    if(state.venue !== "binance") return;
+    state.binHostIdx = (state.binHostIdx + 1) % state.binHosts.length;
+    setStatus("断线，" + (state.retryDelay/1000) + "s 后重连…", false);
+    setTimeout(() => { if(state.venue === "binance") binConnect(); }, state.retryDelay);
+    state.retryDelay = Math.min(state.retryDelay * 2, 30000);
+  };
+  ws.onclose = dead; ws.onerror = dead;
+}
+
+function connect(){
+  if(state.ws){ try{ state.ws.close(); }catch(e){} state.ws = null; }
+  state.trades = []; state.bids.clear(); state.asks.clear(); state.hist = [];
+  state.okxHostIdx = 0; state.binHostIdx = 0; state.retryDelay = 2000;
+  if(state.venue.startsWith("okx")) okxConnect(); else binConnect();
+}
+function setStatus(txt, ok){
+  $("statusTxt").textContent = txt;
+  $("dot").className = ok ? "ok" : (txt.indexOf("连接中") === 0 ? "" : "bad");
+  if(txt.indexOf("连接中") === 0) $("dot").id = "dot"; // keep id
+  $("dot").className = ok ? "ok" : (txt.indexOf("连接中") === 0 ? "" : "bad");
+}
+
+/* ---------- 渲染（每 0.5 秒） ---------- */
+function setPrice(px){
+  if(!(px > 0)) return;
+  state.prevPrice = state.price || px;
+  state.price = px;
+  paintPrice();
+}
+function paintPrice(){
+  if(state.price <= 0) return;
+  const p = $("price");
+  p.textContent = fmt(state.price, C().pxDec);
+  p.className = state.price > state.prevPrice ? "up" : state.price < state.prevPrice ? "down" : "";
+  const lv = $("levels"), cfg = C();
+  if(cfg.sup){
+    const dSup = (state.price - cfg.sup) / cfg.sup * 100;
+    const dRes = (cfg.res - state.price) / state.price * 100;
+    lv.style.display = "block";
+    lv.innerHTML = "关键位 支撑 <b>" + fmt(cfg.sup,2) + "</b> (" + (dSup>=0?"+":"") + fmt(dSup,1) + "%) · 阻力 <b>" + fmt(cfg.res,2) + "</b> (" + (dRes>=0?"+":"") + fmt(dRes,1) + "%)";
+  } else lv.style.display = "none";
+}
+function prune(){
+  const cut = Date.now() - state.windowSec * 1000;
+  while(state.trades.length && state.trades[0].t < cut) state.trades.shift();
+}
+function render(){
+  state.tick++;
+  prune();
+  const now = Date.now();
+
+  // 价格
+  paintPrice();
+
+  // 成交统计
+  let bn=0, sn=0, bv=0, sv=0;
+  for(const t of state.trades){ if(t.buy){bn++; bv+=t.qty;} else {sn++; sv+=t.qty;} }
+  const tot = bv + sv, bpct = tot > 0 ? bv/tot*100 : 50;
+  $("tBuyN").textContent = bn.toLocaleString();
+  $("tSellN").textContent = sn.toLocaleString();
+  $("tBuyV").innerHTML = fmt(bv, C().volDec) + " <small>" + state.symbol + "</small>";
+  $("tSellV").innerHTML = fmt(sv, C().volDec) + " <small>" + state.symbol + "</small>";
+  const dv = bv - sv;
+  const dEl = $("tDiff");
+  dEl.innerHTML = tot > 0
+    ? (dv >= 0 ? "买入多 <span class='buy'>+" + fmt(dv,C().volDec) + " " + state.symbol + "</span>" : "卖出多 <span class='sell'>" + fmt(dv,C().volDec) + " " + state.symbol + "</span>")
+    : "暂无成交数据";
+  $("tBar").style.width = bpct + "%";
+  $("tBuyPct").textContent = fmt(bpct,1) + "%";
+  $("tSellPct").textContent = fmt(100-bpct,1) + "%";
+  $("tradeSub").textContent = "统计窗口：最近 " + (state.windowSec >= 60 ? (state.windowSec/60) + " 分钟" : state.windowSec + " 秒") + " · 数据随行情推送实时累积，每 0.5 秒刷新显示";
+
+  // 挂单统计
+  let bidV=0, askV=0, bestBid=0, bestAsk=0, bestBidQ=0, bestAskQ=0;
+  let maxBidQ=0, maxBidP=0, maxAskQ=0, maxAskP=0;
+  for(const [p,q] of state.bids){ bidV+=q; const fp=parseFloat(p); if(fp>bestBid){bestBid=fp; bestBidQ=q;} if(q>maxBidQ){maxBidQ=q; maxBidP=fp;} }
+  for(const [p,q] of state.asks){ askV+=q; const fp=parseFloat(p); if(!bestAsk||fp<bestAsk){bestAsk=fp; bestAskQ=q;} if(q>maxAskQ){maxAskQ=q; maxAskP=fp;} }
+  const btot = bidV + askV, bbPct = btot > 0 ? bidV/btot*100 : 50;
+  $("bBidV").innerHTML = btot>0 ? fmt(bidV,C().volDec) + " <small>" + state.symbol + "</small>" : "—";
+  $("bAskV").innerHTML = btot>0 ? fmt(askV,C().volDec) + " <small>" + state.symbol + "</small>" : "—";
+  $("bTop").innerHTML = (bestBid&&bestAsk) ? ("<span class='buy'>"+fmt(bestBid,C().pxDec)+"</span> / <span class='sell'>"+fmt(bestAsk,C().pxDec)+"</span>") : "—";
+  $("bSpread").textContent = (bestBid&&bestAsk) ? fmt(bestAsk-bestBid,C().pxDec) : "—";
+  const bdEl = $("bDiff"), bdv = bidV - askV;
+  bdEl.innerHTML = btot > 0
+    ? (bdv >= 0 ? "买单多 <span class='buy'>+" + fmt(bdv,C().volDec) + " " + state.symbol + "</span>" : "卖单多 <span class='sell'>" + fmt(bdv,C().volDec) + " " + state.symbol + "</span>")
+    : "暂无盘口数据";
+  $("bBar").style.width = bbPct + "%";
+  $("bBuyPct").textContent = fmt(bbPct,1) + "%";
+  $("bSellPct").textContent = fmt(100-bbPct,1) + "%";
+  $("bookSub").textContent = state.venue.startsWith("okx") ? "全盘 400 档深度 · 每 0.5 秒刷新显示" : "盘口 20 档深度 · 每 0.5 秒刷新显示";
+
+  // 大单墙
+  if(btot > 0){
+    const cfg = C(), u = state.symbol;
+    const wallLine = (label, q, p, cls) => q >= cfg.wallQty
+      ? "<div>🧱 <b class='"+cls+"'>" + label + "墙 " + fmt(q,cfg.volDec) + " " + u + "</b> @ " + fmt(p,cfg.pxDec) + "</div>" : "";
+    let html = "<div>最大买单 <b class='buy'>" + fmt(maxBidQ,cfg.volDec) + " " + u + "</b> @ " + fmt(maxBidP,cfg.pxDec)
+      + "　|　最大卖单 <b class='sell'>" + fmt(maxAskQ,cfg.volDec) + " " + u + "</b> @ " + fmt(maxAskP,cfg.pxDec) + "</div>";
+    html += wallLine("买", maxBidQ, maxBidP, "buy") + wallLine("卖", maxAskQ, maxAskP, "sell");
+    if(!wallLine("买", maxBidQ, maxBidP) && !wallLine("卖", maxAskQ, maxAskP))
+      html += "<div style='color:var(--dim)'>当前无 ≥" + cfg.wallQty + " " + u + " 的大单墙</div>";
+    $("walls").innerHTML = html;
+  }
+
+  // 历史曲线
+  if(tot > 0 || btot > 0){
+    state.hist.push({t: now, tradePct: tot>0?bpct:null, bookPct: btot>0?bbPct:null});
+    if(state.hist.length > 240) state.hist.shift();
+  }
+  drawChart($("chartTrade"), state.hist.map(h => h.tradePct), "#26a69a", 0, 100);
+  drawChart($("chartBook"), state.hist.map(h => h.bookPct), "#58a6ff", 0, 100);
+}
+function drawChart(cv, data, color, min, max){
+  const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  const pts = data.filter(v => v !== null && v !== undefined);
+  if(pts.length < 2) return;
+  ctx.strokeStyle = "rgba(139,148,158,.25)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+  pts.forEach((v,i) => {
+    const x = i/(pts.length-1)*W, y = H - (v-min)/(max-min)*H;
+    i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+  });
+  ctx.stroke();
+}
+
+/* ---------- 事件 ---------- */
+$("venueSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#venueSeg button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.venue = b.dataset.v; connect();
+});
+$("symSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#symSeg button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.symbol = b.dataset.s;
+  if(state.symbol === "XCRCL" && state.venue !== "okx-spot"){
+    state.venue = "okx-spot";
+    document.querySelectorAll("#venueSeg button").forEach(x => x.classList.toggle("on", x.dataset.v === "okx-spot"));
+  }
+  document.title = state.symbol + " 实时买卖监控";
+  connect();
+});
+$("winSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#winSeg button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.windowSec = parseInt(b.dataset.w); state.trades = [];
+});
+$("reconnect").addEventListener("click", connect);
+document.addEventListener("visibilitychange", () => { if(!document.hidden && !state.wsOk) connect(); });
+
+/* OKX 心跳 + 合约面值 */
+setInterval(() => { if(state.venue.startsWith("okx") && state.ws && state.ws.readyState === 1) state.ws.send('{"op":"ping"}'); }, 20000);
+fetch("https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=BTC-USDT-SWAP")
+  .then(r => r.json()).then(j => {
+    if(j.code === "0" && j.data && j.data[0] && j.data[0].ctVal) state.ctVal = parseFloat(j.data[0].ctVal);
+  }).catch(()=>{});
+
+connect();
+setInterval(render, 500);
+render();
+</script>
+</body>
+</html>
