@@ -841,6 +841,27 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 series.extend(_ping_series(key, entity_ids, start, end, max_points, task_id))
             else:
                 series.extend(_query_series(key, entity_ids, start, end, max_points))
+        # 数据未覆盖整个请求窗口时（如任务新建不久、数据只有最近几天），
+        # 把 start 收敛到实际数据起点。主题用 start/end 定图表 x 轴范围，
+        # 否则长窗口下曲线会被挤到最右侧很窄一段，看起来像“没有数据显示”。
+        try:
+            data_min_ts = None
+            for s in series:
+                for p in s.get("points") or []:
+                    t = _parse_time(p.get("time"))
+                    if t is None:
+                        continue
+                    ts = t.timestamp()
+                    if data_min_ts is None or ts < data_min_ts:
+                        data_min_ts = ts
+            if data_min_ts is not None:
+                start_ts = start.timestamp()
+                end_ts = end.timestamp()
+                bucket_s = max(1.0, end_ts - start_ts) / max(1, max_points)
+                if data_min_ts > start_ts + bucket_s and data_min_ts < end_ts - 60:
+                    start = datetime.fromtimestamp(data_min_ts, tz=timezone.utc)
+        except Exception:
+            pass
         return {
             "start": _iso(start),
             "end": _iso(end),
@@ -936,11 +957,16 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
         优先取该节点 agent 自行上报的行（client_uuid=节点 uuid）；
         该节点无上报时回退到主控侧探测行（client_uuid=''），兼容未升级的 agent。
+        取最新的 limit 条：数据量超过 limit 时保证拿到的是最近的数据，
+        而不是窗口最旧的一段。
         """
-        rows = store.ping_results(task_id, since_iso, limit=limit)
+        rows = store.ping_results(task_id, since_iso, limit=limit, desc=True)
         rows = [r for r in rows
                 if (end_iso is None or (r.get("time") or "") <= end_iso)
                 and _parse_time(r.get("time")) is not None]
+        # 取数用 DESC（拿到最新的 limit 条），返回前按时间排回 ASC，
+        # 调用方（统计 latest/图表分桶）依赖时间升序。
+        rows.sort(key=lambda r: r.get("time") or "")
         own = [r for r in rows if (r.get("client_uuid") or "") == (node_uuid or "")]
         if own:
             return own
@@ -1066,7 +1092,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 node_uuids = [nodes[0].get("uuid")] if nodes else [""]
             for node_uuid in node_uuids:
                 # v1.9.4：该节点的 agent 上报优先，无上报时回退主控探测数据
-                rows = _ping_rows_for_node(t.get("id"), node_uuid, since, limit=2000)
+                rows = _ping_rows_for_node(t.get("id"), node_uuid, since, limit=20000)
+                # 长窗口降采样：在已取到的时间范围均匀取至多 2000 点，
+                # 避免数据量大时曲线只覆盖窗口一小段。
+                if len(rows) > 2000:
+                    step = len(rows) / 2000
+                    rows = [rows[int(i * step)] for i in range(2000)]
                 for r in rows:
                     ok = bool(r.get("ok"))
                     lat = r.get("latency_ms")

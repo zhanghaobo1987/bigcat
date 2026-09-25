@@ -831,11 +831,15 @@ class Storage:
             self._conn.execute("DELETE FROM ping_results WHERE time < ?", (cutoff,))
             self._conn.commit()
 
-    def ping_results(self, task_id: int, since_iso: str, limit: int = 500):
+    def ping_results(self, task_id: int, since_iso: str, limit: int = 500,
+                     desc: bool = False):
+        """延迟探测记录。desc=True 时取最新的 limit 条（图表/长窗口用，
+        避免数据量超过 limit 时只拿到最旧的一段）；默认 ASC 保持历史行为。"""
+        order = "DESC" if desc else "ASC"
         with self._lock:
             rows = self._conn.execute(
-                """SELECT * FROM ping_results WHERE task_id = ? AND time >= ?
-                   ORDER BY time ASC LIMIT ?""", (task_id, since_iso, limit)).fetchall()
+                f"""SELECT * FROM ping_results WHERE task_id = ? AND time >= ?
+                   ORDER BY time {order} LIMIT ?""", (task_id, since_iso, limit)).fetchall()
         return [dict(r) for r in rows]
 
     def ping_stats(self, since_iso: str):
