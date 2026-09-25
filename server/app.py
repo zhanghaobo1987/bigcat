@@ -239,13 +239,17 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     # 前台首页底部快捷链接：serve-time 注入，与主题无关（换主题不丢失）。
     # 图片链接形式：点击图标新标签页打开 /crypto 实时监控页。
     _CRYPTO_LINK_SNIPPET = (
-        '<div id="bigcat-crypto-link" style="text-align:center;padding:16px 12px 20px;">'
-        '<a href="/crypto" target="_blank" rel="noopener" title="加密货币实时监控（BTC / XCRCL 买卖盘）">'
+        '<div id="bigcat-crypto-link" style="text-align:center;padding:16px 12px 20px;'
+        'font-size:13px;color:#8b949e;">'
+        '<a href="/crypto" target="_blank" rel="noopener" title="加密货币实时监控（BTC / XCRCL 买卖盘）" '
+        'style="text-decoration:none;">'
         '<img src="/crypto-icon.png" alt="加密货币监控" '
         'style="width:56px;height:56px;border-radius:14px;'
-        'box-shadow:0 2px 10px rgba(0,0,0,0.35);transition:transform .15s ease;cursor:pointer;" '
+        'box-shadow:0 2px 10px rgba(0,0,0,0.35);transition:transform .15s ease;cursor:pointer;'
+        'display:block;margin:0 auto;" '
         'onmouseover="this.style.transform=\'scale(1.12)\'" '
         'onmouseout="this.style.transform=\'scale(1)\'"/>'
+        '<div style="margin-top:8px;color:#58a6ff;">加密货币快捷链接</div>'
         "</a></div>"
     )
     _INDEX_PATCH_CACHE = {}  # (theme_short, mtime_ns) -> patched html | None
