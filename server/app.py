@@ -237,12 +237,16 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         return max(24, min(8760, v))
 
     # 前台首页底部快捷链接：serve-time 注入，与主题无关（换主题不丢失）。
+    # 图片链接形式：点击图标新标签页打开 /crypto 实时监控页。
     _CRYPTO_LINK_SNIPPET = (
-        '<div id="bigcat-crypto-link" style="text-align:center;padding:16px 12px 20px;'
-        'font-size:13px;color:#8b949e;">'
-        '<a href="/crypto" target="_blank" rel="noopener" '
-        'style="color:#58a6ff;text-decoration:none;">\U0001f4c8 加密货币快捷链接</a>'
-        "</div>"
+        '<div id="bigcat-crypto-link" style="text-align:center;padding:16px 12px 20px;">'
+        '<a href="/crypto" target="_blank" rel="noopener" title="加密货币实时监控（BTC / XCRCL 买卖盘）">'
+        '<img src="/crypto-icon.png" alt="加密货币监控" '
+        'style="width:56px;height:56px;border-radius:14px;'
+        'box-shadow:0 2px 10px rgba(0,0,0,0.35);transition:transform .15s ease;cursor:pointer;" '
+        'onmouseover="this.style.transform=\'scale(1.12)\'" '
+        'onmouseout="this.style.transform=\'scale(1)\'"/>'
+        "</a></div>"
     )
     _INDEX_PATCH_CACHE = {}  # (theme_short, mtime_ns) -> patched html | None
 
@@ -279,6 +283,11 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def crypto_monitor():
         # 加密货币实时监控单页（BTC / XCRCL 买卖盘），与前台主题无关
         return send_from_directory(app.config["static_dir"], "crypto.html")
+
+    @app.route("/crypto-icon.png")
+    def crypto_icon():
+        # 首页底部快捷链接的图标（与主题无关，存于服务端静态目录）
+        return send_from_directory(app.config["static_dir"], "crypto-icon.png")
 
     @app.route("/assets/<path:p>")
     def assets(p):
