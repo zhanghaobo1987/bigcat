@@ -69,7 +69,22 @@ ask_secret() {
 }
 
 need_root() {
-    [ "$(id -u 2>/dev/null || echo 1)" -eq 0 ] || die "请用 root 运行（路由器 SSH 默认就是 root）"
+    # 部分路由器 busybox 精简掉了 id，逐级兜底：id -u → whoami → $USER/$LOGNAME
+    _uid="$(id -u 2>/dev/null)" || _uid=""
+    if [ -n "$_uid" ]; then
+        [ "$_uid" = "0" ] || die "请用 root 运行（路由器 SSH 默认就是 root）"
+        return 0
+    fi
+    _who="$(whoami 2>/dev/null)" || _who=""
+    if [ -n "$_who" ]; then
+        [ "$_who" = "root" ] || die "请用 root 运行（路由器 SSH 默认就是 root）"
+        return 0
+    fi
+    case "${USER:-}${LOGNAME:-}" in
+        *root*) return 0 ;;
+    esac
+    # Merlin 只有一个 admin（即 root）用户，实在判断不出时警告后继续
+    log "警告: 无法确认当前用户（缺少 id/whoami），假设为 root 继续执行"
 }
 
 parse_args() {
