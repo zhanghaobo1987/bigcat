@@ -135,6 +135,7 @@ setup_entware() {
     fi
     log "正在安装 Entware..."
     mkdir -p "$USB/entware" || die "无法创建 $USB/entware"
+    mkdir -p "$OPT_DIR" || die "无法创建 $OPT_DIR"
     if ! opt_mounted; then
         mount -o bind "$USB/entware" "$OPT_DIR" || die "挂载 $OPT_DIR 失败"
     fi
@@ -172,6 +173,7 @@ ensure_persist() {
         cat >> "$_pm" <<EOF
 # BigCat-entware: 重启后自动挂载 Entware 到 /opt
 if [ "\$1" = "$USB" ]; then
+    mkdir -p /opt
     mount -o bind $USB/entware /opt
     /opt/etc/init.d/rc.unslung start
 fi
@@ -226,7 +228,10 @@ install_autostart() {
     fi
     cat >> "$_ss" <<EOF
 # BigCat-agent: 启动 bigcat 探针
-[ -x /opt/bin/python3 ] || mount -o bind $USB/entware /opt
+if [ ! -x /opt/bin/python3 ]; then
+    mkdir -p /opt
+    mount -o bind $USB/entware /opt
+fi
 /opt/bin/python3 $AGENT_DIR/agent.py --server "$SERVER_URL" --token "$TOKEN" --interval $INTERVAL --disk-mount "$DISK_MOUNT" >> $AGENT_DIR/agent.log 2>&1 < /dev/null &
 EOF
     chmod +x "$_ss"
