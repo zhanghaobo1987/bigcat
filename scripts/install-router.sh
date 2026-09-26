@@ -27,6 +27,8 @@ set -eu
 PATH="${BIGCAT_PATH:-/bin:/sbin:/usr/bin:/usr/sbin}"
 export PATH
 
+SCRIPT_VERSION="1.11.3"
+
 OPT_DIR="${BIGCAT_OPT_DIR:-/opt}"
 JFFS_DIR="${BIGCAT_JFFS_DIR:-/jffs/scripts}"
 RAW_BASE="${BIGCAT_REPO_RAW:-https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main}"
@@ -263,6 +265,7 @@ check_server() {
 }
 
 main() {
+    log "BigCat 路由器一键安装 v$SCRIPT_VERSION"
     parse_args "$@"
     need_root
     resolve_usb
