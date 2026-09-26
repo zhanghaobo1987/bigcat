@@ -27,7 +27,7 @@ set -eu
 PATH="${BIGCAT_PATH:-/bin:/sbin:/usr/bin:/usr/sbin}"
 export PATH
 
-SCRIPT_VERSION="1.11.5"
+SCRIPT_VERSION="1.11.6"
 
 OPT_DIR="${BIGCAT_OPT_DIR:-/opt}"
 JFFS_DIR="${BIGCAT_JFFS_DIR:-/jffs/scripts}"
@@ -42,6 +42,8 @@ AGENT_DIR=""
 
 log() { echo "[BigCat] $*" >&2; }
 die() { echo "[BigCat] 错误: $*" >&2; exit 1; }
+# 部分精简 ash（如 Merlin 的 busybox）没有 command 内建命令，用 type 检测命令是否存在更可靠
+have() { type "$1" >/dev/null 2>&1; }
 
 usage() {
     echo "用法: sh install-router.sh http://主控IP:25774 <agent-token> [--interval 5] [--disk-mount /path] [--usb /tmp/mnt/sda1]" >&2
@@ -127,7 +129,18 @@ resolve_usb() {
 }
 
 opt_mounted() {
-    mount 2>/dev/null | grep -q " on ${OPT_DIR} "
+    # /opt 可能是软链接（如 -> tmp/opt），mount 表里记的是解析后的路径
+    _o="$OPT_DIR"
+    if [ -L "$_o" ]; then
+        _t="$(readlink "$_o")"
+        case "$_t" in
+            /*) _o="$_t" ;;
+            *) _d="$(dirname "$_o")"; _o="${_d%/}/$_t"; unset _d ;;
+        esac
+        unset _t
+    fi
+    mount 2>/dev/null | grep -q " on ${_o} "
+    _r=$?; unset _o; return $_r
 }
 
 # Merlin 上 /opt 常是悬空符号链接（如 /opt -> tmp/opt），且根分区只读、删不掉；
@@ -139,7 +152,7 @@ ensure_opt_dir() {
         _t="$(readlink "$_o")"
         case "$_t" in
             /*) _d="$_t" ;;
-            *) _d="$(dirname "$_o")/$_t" ;;  # 相对链接相对于链接所在目录解析
+            *) _d="$(dirname "$_o")"; _d="${_d%/}/$_t" ;;  # 相对链接相对于链接所在目录解析
         esac
         mkdir -p "$_d" || die "无法创建 $_o 的链接目标目录 $_d"
         unset _t _d
@@ -176,7 +189,7 @@ setup_entware() {
 ensure_persist() {
     mkdir -p "$JFFS_DIR" || die "无法创建 $JFFS_DIR"
     # 1) 开启 JFFS 自定义脚本（对应 Web 后台“系统管理 → 系统设置”开关）
-    if command -v nvram >/dev/null 2>&1; then
+    if have nvram; then
         if [ "$(nvram get jffs2_scripts 2>/dev/null || true)" != "1" ]; then
             log "开启 JFFS 自定义脚本支持..."
             nvram set jffs2_scripts=1 && nvram commit \
@@ -239,7 +252,7 @@ deploy_agent() {
     fi
     stop_agent
     log "下载 agent.py..."
-    if command -v curl >/dev/null 2>&1; then
+    if have curl; then
         curl -fsSL -o "$AGENT_DIR/agent.py" "$RAW_BASE/agent/agent.py" || die "下载 agent.py 失败"
     else
         wget -O "$AGENT_DIR/agent.py" "$RAW_BASE/agent/agent.py" || die "下载 agent.py 失败"
@@ -290,7 +303,7 @@ start_agent() {
 }
 
 check_server() {
-    if command -v curl >/dev/null 2>&1; then
+    if have curl; then
         if curl -fsSL -m 8 -o /dev/null "$SERVER_URL/api/version" 2>/dev/null; then
             log "主控连接正常: $SERVER_URL"
         else
