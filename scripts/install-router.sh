@@ -27,7 +27,7 @@ set -eu
 PATH="${BIGCAT_PATH:-/bin:/sbin:/usr/bin:/usr/sbin}"
 export PATH
 
-SCRIPT_VERSION="1.11.4"
+SCRIPT_VERSION="1.11.5"
 
 OPT_DIR="${BIGCAT_OPT_DIR:-/opt}"
 JFFS_DIR="${BIGCAT_JFFS_DIR:-/jffs/scripts}"
@@ -130,6 +130,25 @@ opt_mounted() {
     mount 2>/dev/null | grep -q " on ${OPT_DIR} "
 }
 
+# Merlin 上 /opt 常是悬空符号链接（如 /opt -> tmp/opt），且根分区只读、删不掉；
+# 正确做法是创建链接指向的目标目录，之后 mount -o bind 即可正常挂载。
+# $1: 要确保的目录（默认 $OPT_DIR）
+ensure_opt_dir() {
+    _o="${1:-$OPT_DIR}"
+    if [ -L "$_o" ] && [ ! -e "$_o" ]; then
+        _t="$(readlink "$_o")"
+        case "$_t" in
+            /*) _d="$_t" ;;
+            *) _d="$(dirname "$_o")/$_t" ;;  # 相对链接相对于链接所在目录解析
+        esac
+        mkdir -p "$_d" || die "无法创建 $_o 的链接目标目录 $_d"
+        unset _t _d
+    else
+        mkdir -p "$_o" || die "无法创建 $_o"
+    fi
+    unset _o
+}
+
 setup_entware() {
     if [ -x "$OPT_DIR/bin/opkg" ]; then
         log "检测到 Entware，跳过安装"
@@ -137,11 +156,7 @@ setup_entware() {
     fi
     log "正在安装 Entware..."
     mkdir -p "$USB/entware" || die "无法创建 $USB/entware"
-    # Merlin 上 /opt 常是悬空符号链接，mkdir -p 会报 No such file or directory，先删掉
-    if [ -L "$OPT_DIR" ] && [ ! -e "$OPT_DIR" ]; then
-        rm -f "$OPT_DIR" || die "无法删除悬空的 $OPT_DIR 链接"
-    fi
-    mkdir -p "$OPT_DIR" || die "无法创建 $OPT_DIR"
+    ensure_opt_dir "$OPT_DIR"
     if ! opt_mounted; then
         mount -o bind "$USB/entware" "$OPT_DIR" || die "挂载 $OPT_DIR 失败"
     fi
@@ -179,8 +194,15 @@ ensure_persist() {
         cat >> "$_pm" <<EOF
 # BigCat-entware: 重启后自动挂载 Entware 到 /opt
 if [ "\$1" = "$USB" ]; then
-    [ -L /opt ] && [ ! -e /opt ] && rm -f /opt  # 清掉悬空符号链接
-    mkdir -p /opt
+    # /opt 可能是只读分区上的悬空链接：创建其目标目录，不删除链接
+    if [ -L /opt ] && [ ! -e /opt ]; then
+        _t="\$(readlink /opt)"
+        case "\$_t" in /*) _d="\$_t";; *) _d="/\$_t";; esac
+        mkdir -p "\$_d"
+        unset _t _d
+    else
+        mkdir -p /opt
+    fi
     mount -o bind $USB/entware /opt
     /opt/etc/init.d/rc.unslung start
 fi
@@ -236,8 +258,15 @@ install_autostart() {
     cat >> "$_ss" <<EOF
 # BigCat-agent: 启动 bigcat 探针
 if [ ! -x /opt/bin/python3 ]; then
-    [ -L /opt ] && [ ! -e /opt ] && rm -f /opt  # 清掉悬空符号链接
-    mkdir -p /opt
+    # /opt 可能是只读分区上的悬空链接：创建其目标目录，不删除链接
+    if [ -L /opt ] && [ ! -e /opt ]; then
+        _t="\$(readlink /opt)"
+        case "\$_t" in /*) _d="\$_t";; *) _d="/\$_t";; esac
+        mkdir -p "\$_d"
+        unset _t _d
+    else
+        mkdir -p /opt
+    fi
     mount -o bind $USB/entware /opt
 fi
 /opt/bin/python3 $AGENT_DIR/agent.py --server "$SERVER_URL" --token "$TOKEN" --interval $INTERVAL --disk-mount "$DISK_MOUNT" >> $AGENT_DIR/agent.log 2>&1 < /dev/null &
