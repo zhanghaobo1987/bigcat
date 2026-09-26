@@ -27,7 +27,7 @@ set -eu
 PATH="${BIGCAT_PATH:-/bin:/sbin:/usr/bin:/usr/sbin}"
 export PATH
 
-SCRIPT_VERSION="1.11.3"
+SCRIPT_VERSION="1.11.4"
 
 OPT_DIR="${BIGCAT_OPT_DIR:-/opt}"
 JFFS_DIR="${BIGCAT_JFFS_DIR:-/jffs/scripts}"
@@ -137,6 +137,10 @@ setup_entware() {
     fi
     log "正在安装 Entware..."
     mkdir -p "$USB/entware" || die "无法创建 $USB/entware"
+    # Merlin 上 /opt 常是悬空符号链接，mkdir -p 会报 No such file or directory，先删掉
+    if [ -L "$OPT_DIR" ] && [ ! -e "$OPT_DIR" ]; then
+        rm -f "$OPT_DIR" || die "无法删除悬空的 $OPT_DIR 链接"
+    fi
     mkdir -p "$OPT_DIR" || die "无法创建 $OPT_DIR"
     if ! opt_mounted; then
         mount -o bind "$USB/entware" "$OPT_DIR" || die "挂载 $OPT_DIR 失败"
@@ -175,6 +179,7 @@ ensure_persist() {
         cat >> "$_pm" <<EOF
 # BigCat-entware: 重启后自动挂载 Entware 到 /opt
 if [ "\$1" = "$USB" ]; then
+    [ -L /opt ] && [ ! -e /opt ] && rm -f /opt  # 清掉悬空符号链接
     mkdir -p /opt
     mount -o bind $USB/entware /opt
     /opt/etc/init.d/rc.unslung start
@@ -231,6 +236,7 @@ install_autostart() {
     cat >> "$_ss" <<EOF
 # BigCat-agent: 启动 bigcat 探针
 if [ ! -x /opt/bin/python3 ]; then
+    [ -L /opt ] && [ ! -e /opt ] && rm -f /opt  # 清掉悬空符号链接
     mkdir -p /opt
     mount -o bind $USB/entware /opt
 fi
