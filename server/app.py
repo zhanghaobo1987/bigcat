@@ -938,19 +938,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def _ping_task_nodes(task, clients):
         """探测任务归属的节点。
 
-        Komari 语义：任务绑定了 clients 时，仅归属被绑定的节点；
-        未绑定（空列表）时沿用目标 IP 匹配启发式（bigcat 扩展）。"""
+        Komari 语义（与 /api/agent/ping_tasks 下发一致）：任务绑定了 clients 时，
+        仅归属被绑定的节点；未绑定时为全局任务，归属所有候选节点（各节点分别探测）。
+        """
         bound = store.get_ping_task_clients(task.get("id"))
         by_uuid = {c.get("uuid"): c for c in clients}
         if bound:
             return [by_uuid[u] for u in bound if u in by_uuid]
-        target = str(task.get("target") or "")
-        out = []
-        for c in clients:
-            ips = {str(c.get("ipv4") or ""), str(c.get("ipv6") or "")} - {""}
-            if any(ip and ip in target for ip in ips):
-                out.append(c)
-        return out
+        return list(clients)
 
     def _ping_rows_for_node(task_id, node_uuid, since_iso, end_iso=None, limit=500):
         """某节点某任务的探测行（v1.9.4 分布式探测）。
@@ -1059,8 +1054,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def _ping_records_payload(uuid="", task_id="", hours="4"):
         """Komari 形状的延迟记录：{count, records[{task_id,time,value,client}], tasks}。
         v1.9.4 起为分布式探测：每条记录归属实际执行探测的节点（agent 上报优先，
-        未上报的节点回退到主控探测数据）；uuid 查询时仅返回探测目标与该节点
-        IP 匹配的任务，没有匹配则返回空。"""
+        未上报的节点回退到主控探测数据）；uuid 查询时返回该节点应探测的任务
+        （绑定到该节点的，或未绑定的全局任务），没有则返回空。"""
         try:
             h = max(1, min(_ping_preserve_hours(), int(hours)))
         except (TypeError, ValueError):
@@ -1073,14 +1068,19 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             except (TypeError, ValueError):
                 return {"count": 0, "records": [], "tasks": []}
             tasks = [t for t in tasks if t.get("id") == tid]
-        elif uuid:
+        if uuid:
             node = next((c for c in store.list_clients() if c.get("uuid") == uuid), None)
             if node is None:
                 tasks = []
             else:
-                ips = {str(node.get("ipv4") or ""), str(node.get("ipv6") or "")} - {""}
-                tasks = [t for t in tasks
-                         if any(ip and ip in str(t.get("target") or "") for ip in ips)]
+                # 与 _ping_task_nodes 一致：绑定任务仅归属被绑定节点，
+                # 未绑定任务为全局任务，归属所有节点
+                keep = []
+                for t in tasks:
+                    bound = store.get_ping_task_clients(t.get("id"))
+                    if not bound or uuid in bound:
+                        keep.append(t)
+                tasks = keep
         records = []
         all_clients = store.list_clients()
         for t in tasks:
