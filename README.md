@@ -23,6 +23,7 @@ bigcat/
 │   ├── uninstall-macos.sh  # macOS 卸载
 │   ├── install.ps1         # Windows 一键安装（server/agent，计划任务）
 │   ├── uninstall.ps1       # Windows 卸载
+│   ├── install-router.sh   # 路由器一键安装（ASUSWRT-Merlin，Entware + U 盘）
 │   └── bigcat.service      # systemd 服务单元（服务端，供参考）
 ├── requirements.txt
 ├── Dockerfile
@@ -155,6 +156,27 @@ powershell -ExecutionPolicy Bypass -File $env:TEMP\uninstall.ps1 -Mode all
 ```
 
 彻底删除数据：在末尾加 `-Purge` 参数。
+
+### 路由器（ASUSWRT-Merlin）
+
+适用于 ASUSWRT-Merlin 固件的路由器（已验证 GT-AX6000，aarch64）。
+要求：路由器已开启 SSH、插有 ext2/3/4 格式的 U 盘。
+脚本会自动：检测 U 盘 → 安装 Entware（已有则跳过）→ 安装 Python3 + psutil →
+下载 agent → 写入开机自启（post-mount / services-start）→ 启动上报。
+重复运行即升级（更新 agent 并重启，不重复写自启配置）。
+
+在路由器 SSH 里执行（已是 root，不用 sudo；路由器没有 bash，用 sh）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/install-router.sh | sh -s -- http://主控IP:25774 <token>
+```
+
+可选参数：`--interval 秒数`（上报间隔，默认 2）、`--disk-mount 路径`
+（磁盘用量监控点，默认 U 盘挂载点）、`--usb 路径`（手动指定 U 盘挂载点）、
+`--raw-base 地址`（agent 下载基地址，国内可用代理前缀）。
+
+也可以在后台管理页「节点管理」→「一键部署指令」→「路由器」分类里
+直接复制带 token 的一键命令。
 
 ### 注册被控节点（拿 token）
 

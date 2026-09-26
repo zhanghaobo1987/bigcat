@@ -712,24 +712,26 @@
       <button data-os="linux" class="active">Linux</button>
       <button data-os="macos">macOS</button>
       <button data-os="windows">Windows</button>
+      <button data-os="router">路由器</button>
     </div>
-    <label>安装选项</label>
-    <div class="chk-list" style="margin-bottom:12px">
+    <label data-oslist="linux macos windows">安装选项</label>
+    <div class="chk-list" style="margin-bottom:12px" data-oslist="linux macos windows">
       <label><input type="checkbox" id="deploy-gpu"> 详细 GPU 监控 <span class="muted">（需 nvidia-smi）</span></label>
       <label><input type="checkbox" id="deploy-no-remote"> 禁用远程控制</label>
       <label><input type="checkbox" id="deploy-insecure"> 忽略不安全证书 <span class="muted">（自签证书）</span></label>
       <label><input type="checkbox" id="deploy-nic-ip"> 从网卡获取 IP 地址</label>
     </div>
     <div class="form2">
-      <div><label>采集间隔（秒）</label><input id="deploy-interval" type="number" min="1" value="2"></div>
-      <div><label>月流量重置日 <span class="muted">（1-28，0=关闭）</span></label><input id="deploy-reset-day" type="number" min="0" max="28" value="0"></div>
-      <div><label>服务名称 <span class="muted">（留空用默认 bigcat-agent）</span></label><input id="deploy-svc" type="text" placeholder="bigcat-agent"></div>
-      <div><label>磁盘挂载点 <span class="muted">（留空用 /）</span></label><input id="deploy-disk-mount" type="text" placeholder="/"></div>
-      <div><label>指定网卡 <span class="muted">（逗号分隔，支持 * 通配）</span></label><input id="deploy-include-nics" type="text" placeholder="eth0,eth1"></div>
-      <div><label>排除网卡 <span class="muted">（逗号分隔，支持 * 通配）</span></label><input id="deploy-exclude-nics" type="text" placeholder="docker*,veth*"></div>
+      <div data-oslist="linux macos windows router"><label>采集间隔（秒）</label><input id="deploy-interval" type="number" min="1" value="2"></div>
+      <div data-oslist="linux macos windows"><label>月流量重置日 <span class="muted">（1-28，0=关闭）</span></label><input id="deploy-reset-day" type="number" min="0" max="28" value="0"></div>
+      <div data-oslist="linux macos windows"><label>服务名称 <span class="muted">（留空用默认 bigcat-agent）</span></label><input id="deploy-svc" type="text" placeholder="bigcat-agent"></div>
+      <div data-oslist="linux macos windows router"><label>磁盘挂载点 <span class="muted" id="deploy-disk-hint">（留空用 /）</span></label><input id="deploy-disk-mount" type="text" placeholder="/"></div>
+      <div data-oslist="linux macos windows"><label>指定网卡 <span class="muted">（逗号分隔，支持 * 通配）</span></label><input id="deploy-include-nics" type="text" placeholder="eth0,eth1"></div>
+      <div data-oslist="linux macos windows"><label>排除网卡 <span class="muted">（逗号分隔，支持 * 通配）</span></label><input id="deploy-exclude-nics" type="text" placeholder="docker*,veth*"></div>
+      <div data-oslist="router"><label>U 盘挂载点 <span class="muted">（留空自动检测 /tmp/mnt/*）</span></label><input id="deploy-usb" type="text" placeholder="/tmp/mnt/sda1"></div>
     </div>
-    <label>安装目录 <span class="muted" id="deploy-dir-hint">（留空用默认 /opt/bigcat）</span></label>
-    <input id="deploy-dir" type="text" placeholder="/opt/bigcat">
+    <label data-oslist="linux macos windows">安装目录 <span class="muted" id="deploy-dir-hint">（留空用默认 /opt/bigcat）</span></label>
+    <input id="deploy-dir" type="text" placeholder="/opt/bigcat" data-oslist="linux macos windows">
     <label>GitHub 代理 <span class="muted">（国内机器访问 GitHub 困难时填写，例如 https://ghproxy.com/）</span></label>
     <input id="deploy-proxy" type="text" placeholder="https://ghproxy.com/">
     <label>指令 <span class="muted">（在被控机上以 root / 管理员身份执行）</span></label>
@@ -1204,7 +1206,7 @@ window.copyText = async (t) => {
 };
 
 /* ---------------- 一键部署指令 ---------------- */
-const DEPLOY_DEFAULT_DIR = {linux: '/opt/bigcat', macos: '/usr/local/bigcat', windows: 'C:\\Program Files\\bigcat'};
+const DEPLOY_DEFAULT_DIR = {linux: '/opt/bigcat', macos: '/usr/local/bigcat', windows: 'C:\\Program Files\\bigcat', router: 'U 盘下的 bigcat 目录（自动）'};
 let deployCtx = {uuid: '', token: '', name: '', os: 'linux'};
 
 window.openDeploy = (uuid, token, name) => {
@@ -1220,6 +1222,7 @@ window.openDeploy = (uuid, token, name) => {
   $('deploy-nic-ip').checked = false;
   $('deploy-reset-day').value = 0;
   $('deploy-disk-mount').value = '';
+  $('deploy-usb').value = '';
   $('deploy-include-nics').value = '';
   $('deploy-exclude-nics').value = '';
   setDeployOS('linux');
@@ -1230,14 +1233,18 @@ function setDeployOS(os) {
   deployCtx.os = os;
   document.querySelectorAll('#deploy-tabs button').forEach(x =>
     x.classList.toggle('active', x.dataset.os === os));
+  document.querySelectorAll('#modal-deploy [data-oslist]').forEach(el => {
+    el.style.display = el.dataset.oslist.split(' ').includes(os) ? '' : 'none';
+  });
   $('deploy-dir-hint').textContent = '（留空用默认 ' + DEPLOY_DEFAULT_DIR[os] + '）';
   $('deploy-dir').placeholder = DEPLOY_DEFAULT_DIR[os];
+  $('deploy-disk-hint').textContent = os === 'router' ? '（留空用 U 盘挂载点）' : '（留空用 /）';
   refreshDeployCmd();
 }
 document.querySelectorAll('#deploy-tabs button').forEach(b =>
   b.addEventListener('click', () => setDeployOS(b.dataset.os)));
 ['deploy-interval', 'deploy-svc', 'deploy-dir', 'deploy-proxy', 'deploy-reset-day',
- 'deploy-disk-mount', 'deploy-include-nics', 'deploy-exclude-nics'].forEach(id =>
+ 'deploy-disk-mount', 'deploy-usb', 'deploy-include-nics', 'deploy-exclude-nics'].forEach(id =>
   $(id).addEventListener('input', refreshDeployCmd));
 ['deploy-gpu', 'deploy-no-remote', 'deploy-insecure', 'deploy-nic-ip'].forEach(id =>
   $(id).addEventListener('change', refreshDeployCmd));
@@ -1268,7 +1275,8 @@ function refreshDeployCmd() {
   if (proxy && !/\/$/.test(proxy)) proxy += '/';
   const origin = location.origin, token = deployCtx.token;
   const repo = 'https://github.com/zhanghaobo1987/bigcat';
-  const rawBase = 'https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main/scripts/';
+  const rawRoot = 'https://raw.githubusercontent.com/zhanghaobo1987/bigcat/main';
+  const rawBase = rawRoot + '/scripts/';
   const o = deployExtraOpts();
   let cmd = '';
   if (deployCtx.os === 'windows') {
@@ -1289,6 +1297,16 @@ function refreshDeployCmd() {
     cmd = 'Invoke-WebRequest -Uri ' + url + ' -OutFile $env:TEMP\\bigcat-install.ps1; ' +
       'powershell -ExecutionPolicy Bypass -File $env:TEMP\\bigcat-install.ps1' +
       ' -Mode agent -ServerUrl ' + origin + ' -Token ' + token + extra;
+  } else if (deployCtx.os === 'router') {
+    // 路由器已是 root，不用 sudo；用 sh（路由器没有 bash）
+    const url = proxy + rawBase + 'install-router.sh';
+    let extra = '';
+    if (interval !== 2) extra += ' --interval ' + interval;
+    if (o.diskMount) extra += ' --disk-mount ' + shQuote(o.diskMount);
+    const usb = $('deploy-usb').value.trim();
+    if (usb) extra += ' --usb ' + shQuote(usb);
+    if (proxy) extra += ' --raw-base ' + shQuote(proxy + rawRoot);
+    cmd = 'curl -fsSL ' + url + ' | sh -s -- ' + origin + ' ' + token + extra;
   } else {
     const script = deployCtx.os === 'macos' ? 'install-macos.sh' : 'install.sh';
     const url = proxy + rawBase + script;
