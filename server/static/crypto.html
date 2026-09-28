@@ -83,6 +83,12 @@
 
   <div class="card">
     <h2>📊 实时挂单（盘口深度）</h2>
+    <div style="display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--dim)">统计范围</span>
+      <div class="seg" id="rangeSeg">
+        <button data-r="inf" class="on">全盘</button><button data-r="1">±1</button><button data-r="3">±3</button><button data-r="5">±5</button><button data-r="10">±10</button>
+      </div>
+    </div>
     <div class="sub" id="bookSub">全盘深度 · 每 0.5 秒刷新显示</div>
     <div class="grid">
       <div class="stat"><div class="k">买单总量</div><div class="v buy" id="bBidV">—</div></div>
@@ -131,6 +137,7 @@ const state = {
   venue: "okx-perp",
   symbol: "BTC",
   windowSec: 60,
+  bookRange: { BTC: Infinity, XCRCL: 3 },  // 挂单统计范围：距当前价的偏差，各标的独立记忆
   trades: [],            // {t, buy:boolean, qty}
   bids: new Map(), asks: new Map(),  // price(str) -> qty(BTC)
   price: 0, prevPrice: 0,
@@ -300,9 +307,9 @@ function render(){
   // 挂单统计
   let bidV=0, askV=0, bestBid=0, bestAsk=0, bestBidQ=0, bestAskQ=0;
   let maxBidQ=0, maxBidP=0, maxAskQ=0, maxAskP=0;
-  // XCRCL 只统计当前价 ±3 范围内的挂单（BTC 等其他标的全盘统计）
-  const px = state.price;
-  const inRange = fp => state.symbol !== "XCRCL" || !(px > 0) || Math.abs(fp - px) <= 3;
+  // 挂单统计：按所选偏差范围过滤（XCRCL 默认 ±3，BTC 默认全盘）
+  const px = state.price, R = state.bookRange[state.symbol];
+  const inRange = fp => !isFinite(R) || !(px > 0) || Math.abs(fp - px) <= R;
   for(const [p,q] of state.bids){ const fp=parseFloat(p); if(!inRange(fp)) continue; bidV+=q; if(fp>bestBid){bestBid=fp; bestBidQ=q;} if(q>maxBidQ){maxBidQ=q; maxBidP=fp;} }
   for(const [p,q] of state.asks){ const fp=parseFloat(p); if(!inRange(fp)) continue; askV+=q; if(!bestAsk||fp<bestAsk){bestAsk=fp; bestAskQ=q;} if(q>maxAskQ){maxAskQ=q; maxAskP=fp;} }
   const btot = bidV + askV, bbPct = btot > 0 ? bidV/btot*100 : 50;
@@ -318,7 +325,8 @@ function render(){
   $("bBuyPct").textContent = fmt(bbPct,1) + "%";
   $("bSellPct").textContent = fmt(100-bbPct,1) + "%";
   $("bookSub").textContent = (state.venue.startsWith("okx") ? "全盘 400 档深度" : "盘口 20 档深度")
-    + (state.symbol === "XCRCL" ? " · 仅统计当前价 ±3 范围内" : "") + " · 每 0.5 秒刷新显示";
+    + (isFinite(state.bookRange[state.symbol]) ? " · 仅统计当前价 ±" + state.bookRange[state.symbol] + " 范围内" : "")
+    + " · 每 0.5 秒刷新显示";
 
   // 大单墙
   if(btot > 0){
@@ -370,6 +378,10 @@ $("symSeg").addEventListener("click", e => {
     state.venue = "okx-spot";
     document.querySelectorAll("#venueSeg button").forEach(x => x.classList.toggle("on", x.dataset.v === "okx-spot"));
   }
+  // 同步统计范围按钮到当前标的的记忆值
+  const RR = state.bookRange[state.symbol];
+  document.querySelectorAll("#rangeSeg button").forEach(x => x.classList.toggle("on",
+    (x.dataset.r === "inf" && !isFinite(RR)) || parseFloat(x.dataset.r) === RR));
   document.title = state.symbol + " 实时买卖监控";
   connect();
 });
@@ -377,6 +389,12 @@ $("winSeg").addEventListener("click", e => {
   const b = e.target.closest("button"); if(!b) return;
   document.querySelectorAll("#winSeg button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.windowSec = parseInt(b.dataset.w); state.trades = [];
+});
+$("rangeSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#rangeSeg button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  state.bookRange[state.symbol] = b.dataset.r === "inf" ? Infinity : parseFloat(b.dataset.r);
 });
 $("reconnect").addEventListener("click", connect);
 document.addEventListener("visibilitychange", () => { if(!document.hidden && !state.wsOk) connect(); });
