@@ -300,8 +300,11 @@ function render(){
   // 挂单统计
   let bidV=0, askV=0, bestBid=0, bestAsk=0, bestBidQ=0, bestAskQ=0;
   let maxBidQ=0, maxBidP=0, maxAskQ=0, maxAskP=0;
-  for(const [p,q] of state.bids){ bidV+=q; const fp=parseFloat(p); if(fp>bestBid){bestBid=fp; bestBidQ=q;} if(q>maxBidQ){maxBidQ=q; maxBidP=fp;} }
-  for(const [p,q] of state.asks){ askV+=q; const fp=parseFloat(p); if(!bestAsk||fp<bestAsk){bestAsk=fp; bestAskQ=q;} if(q>maxAskQ){maxAskQ=q; maxAskP=fp;} }
+  // XCRCL 只统计当前价 ±3 范围内的挂单（BTC 等其他标的全盘统计）
+  const px = state.price;
+  const inRange = fp => state.symbol !== "XCRCL" || !(px > 0) || Math.abs(fp - px) <= 3;
+  for(const [p,q] of state.bids){ const fp=parseFloat(p); if(!inRange(fp)) continue; bidV+=q; if(fp>bestBid){bestBid=fp; bestBidQ=q;} if(q>maxBidQ){maxBidQ=q; maxBidP=fp;} }
+  for(const [p,q] of state.asks){ const fp=parseFloat(p); if(!inRange(fp)) continue; askV+=q; if(!bestAsk||fp<bestAsk){bestAsk=fp; bestAskQ=q;} if(q>maxAskQ){maxAskQ=q; maxAskP=fp;} }
   const btot = bidV + askV, bbPct = btot > 0 ? bidV/btot*100 : 50;
   $("bBidV").innerHTML = btot>0 ? fmt(bidV,C().volDec) + " <small>" + state.symbol + "</small>" : "—";
   $("bAskV").innerHTML = btot>0 ? fmt(askV,C().volDec) + " <small>" + state.symbol + "</small>" : "—";
@@ -314,7 +317,8 @@ function render(){
   $("bBar").style.width = bbPct + "%";
   $("bBuyPct").textContent = fmt(bbPct,1) + "%";
   $("bSellPct").textContent = fmt(100-bbPct,1) + "%";
-  $("bookSub").textContent = state.venue.startsWith("okx") ? "全盘 400 档深度 · 每 0.5 秒刷新显示" : "盘口 20 档深度 · 每 0.5 秒刷新显示";
+  $("bookSub").textContent = (state.venue.startsWith("okx") ? "全盘 400 档深度" : "盘口 20 档深度")
+    + (state.symbol === "XCRCL" ? " · 仅统计当前价 ±3 范围内" : "") + " · 每 0.5 秒刷新显示";
 
   // 大单墙
   if(btot > 0){
