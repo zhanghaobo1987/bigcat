@@ -280,7 +280,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         except OSError:
             return None
         old = "(0,F.jsx)(`div`,{className:`min-w-0`,children:"
-        new = "(0,F.jsx)(`div`,{className:`min-w-0`,`data-uuid`:e,children:"
+        new = "(0,F.jsx)(`div`,{className:`min-w-0`,\"data-uuid\":e,children:"
         if old not in text:
             _INSTANCE_JS_PATCH_CACHE[key] = None
             return None
@@ -401,9 +401,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             return None
         if "</body>" in text and "bigcat-crypto-link" not in text:
             text = text.replace("</body>", _CRYPTO_LINK_SNIPPET + "</body>", 1)
-        # 卡片拖拽排序脚本暂时禁用（v1.12.0 导致空白页，根因排查中）
-        # if "</body>" in text and "bigcat-card-sort" not in text:
-        #     text = text.replace("</body>", _CARD_SORT_SNIPPET + "</body>", 1)
+        if "</body>" in text and "bigcat-card-sort" not in text:
+            text = text.replace("</body>", _CARD_SORT_SNIPPET + "</body>", 1)
         _INDEX_PATCH_CACHE[key] = text
         return text
 
