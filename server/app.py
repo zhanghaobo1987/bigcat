@@ -228,6 +228,38 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         _THEME_JS_PATCH_CACHE[key] = out
         return out
 
+    _INSTANCE_JS_PATCH_CACHE = {}  # (theme_short, path, mtime_ns) -> patched bytes | None
+
+    def _patched_instance_js(p):
+        """返回打过补丁的 Instance chunk（bytes）；无需补丁/补丁不适用时返回 None。"""
+        dist = _active_theme_dist()
+        full = os.path.join(dist, "assets", p)
+        try:
+            st = os.stat(full)
+        except OSError:
+            return None
+        key = (_active_theme_short(), p, st.st_mtime_ns)
+        if key in _INSTANCE_JS_PATCH_CACHE:
+            return _INSTANCE_JS_PATCH_CACHE[key]
+        try:
+            with open(full, "rb") as f:
+                text = f.read().decode("utf-8", "ignore")
+        except OSError:
+            return None
+        # Instance chunk: ping 图表断点修复 at() 用 ping 任务间隔（如 30s）作为预期
+        # 数据间隔判断断点；长窗口服务端降采样到 500 点（7 天约 20 分钟一点）时，
+        # 每个正常间隔都被误判为断点并插入 null，随后降采样把含 null 的桶整体置
+        # null，导致 7 天以上曲线空白、Y 轴回退到 [0,100]。改为取任务间隔与实测
+        # 中位间隔的最大值，短窗口行为不变，长窗口不再误杀。
+        old = "let n=o.get(e),i=typeof n==`number`&&n>0?n:K(t,s);"
+        new = "let n=o.get(e),i=Math.max(typeof n==`number`&&n>0?n:0,K(t,s));"
+        if old not in text:
+            _INSTANCE_JS_PATCH_CACHE[key] = None
+            return None
+        out = text.replace(old, new).encode("utf-8")
+        _INSTANCE_JS_PATCH_CACHE[key] = out
+        return out
+
     def _ping_preserve_hours() -> int:
         """ping 记录保留时长（小时），默认 4320 = 180 天；钳制到 [24, 8760]。"""
         try:
@@ -297,9 +329,16 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def assets(p):
         # LuminaPlus 的 ping 图表时间选项在主题 JS 里硬编码上限 7 天：
         # 对其 chartShared chunk 做 serve-time 补丁，扩展为 15/30/60/90/180 天。
+        # Instance chunk 的 ping 断点修复 at() 长窗口误判断点导致曲线空白：
+        # 做 serve-time 补丁，取任务间隔与实测间隔的最大值。
         # 主题更新导致特征串匹配失败时原样返回，不影响页面。
-        if os.path.basename(p).startswith("chartShared-") and p.endswith(".js"):
+        bn = os.path.basename(p)
+        if bn.startswith("chartShared-") and p.endswith(".js"):
             patched = _patched_theme_js(p)
+            if patched is not None:
+                return Response(patched, mimetype="application/javascript")
+        if bn.startswith("Instance-") and p.endswith(".js"):
+            patched = _patched_instance_js(p)
             if patched is not None:
                 return Response(patched, mimetype="application/javascript")
         return send_from_directory(_active_theme_dist() + "/assets", p)
