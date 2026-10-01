@@ -260,6 +260,34 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         _INSTANCE_JS_PATCH_CACHE[key] = out
         return out
 
+    def _patched_index_js(p):
+        """返回打过补丁的主 bundle（bytes）；无需补丁/补丁不适用时返回 None。
+
+        给服务器卡片包装 div 注入 data-uuid，供拖拽排序脚本识别卡片对应节点。
+        """
+        dist = _active_theme_dist()
+        full = os.path.join(dist, "assets", p)
+        try:
+            st = os.stat(full)
+        except OSError:
+            return None
+        key = (_active_theme_short(), p, st.st_mtime_ns)
+        if key in _INSTANCE_JS_PATCH_CACHE:
+            return _INSTANCE_JS_PATCH_CACHE[key]
+        try:
+            with open(full, "rb") as f:
+                text = f.read().decode("utf-8", "ignore")
+        except OSError:
+            return None
+        old = "(0,F.jsx)(`div`,{className:`min-w-0`,children:"
+        new = "(0,F.jsx)(`div`,{className:`min-w-0`,`data-uuid`:e,children:"
+        if old not in text:
+            _INSTANCE_JS_PATCH_CACHE[key] = None
+            return None
+        out = text.replace(old, new).encode("utf-8")
+        _INSTANCE_JS_PATCH_CACHE[key] = out
+        return out
+
     def _ping_preserve_hours() -> int:
         """ping 记录保留时长（小时），默认 4320 = 180 天；钳制到 [24, 8760]。"""
         try:
@@ -284,6 +312,74 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         '<div style="margin-top:8px;color:#58a6ff;">加密货币快捷链接</div>'
         "</a></div>"
     )
+    # 前台服务器卡片拖拽排序：serve-time 注入，与主题无关。
+    # 依赖 index chunk 补丁给卡片包装 div 注入的 data-uuid。
+    # 原理：卡片是 CSS grid 的直接子元素，用 style.order 控制视觉顺序；
+    # 拖拽放下后把新顺序 POST 到 /api/public/server_card_order 持久化。
+    _CARD_SORT_SNIPPET = (
+        '<script id="bigcat-card-sort">(function(){"use strict";'
+        'var API="/api/public/server_card_order",savedOrder=[],dragUuid=null;'
+        'function load(){fetch(API).then(function(r){return r.json();}).then(function(d){'
+        'savedOrder=(d&&d.order)||[];apply();}).catch(function(){});}'
+        'function save(order){savedOrder=order;'
+        'fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},'
+        'body:JSON.stringify({order:order})}).catch(function(){});}'
+        'function cards(){return Array.prototype.slice.call('
+        'document.querySelectorAll(\'div.min-w-0[data-uuid]\'));}'
+        'function pos(u){var i=savedOrder.indexOf(u);return i<0?1e9:i;}'
+        'function apply(){var cs=cards();if(!cs.length)return;'
+        'cs.forEach(function(el){'
+        'el.style.order=pos(el.getAttribute("data-uuid"));'
+        'el.style.cursor="grab";'
+        'if(el.__bcsort)return;el.__bcsort=1;'
+        'el.setAttribute("draggable","true");'
+        'el.addEventListener("dragstart",function(e){'
+        'dragUuid=this.getAttribute("data-uuid");'
+        'e.dataTransfer.effectAllowed="move";'
+        'try{e.dataTransfer.setData("text/plain",dragUuid);}catch(_){}'
+        'this.style.opacity="0.45";});'
+        'el.addEventListener("dragover",function(e){'
+        'e.preventDefault();e.dataTransfer.dropEffect="move";'
+        'if(!dragUuid||this.getAttribute("data-uuid")===dragUuid)return;'
+        'var r=this.getBoundingClientRect(),before=(e.clientY-r.top)<r.height/2;'
+        'this.__before=before;'
+        'this.style.boxShadow=before?"0 -3px 0 0 #3b82f6":"0 3px 0 0 #3b82f6";});'
+        'el.addEventListener("dragleave",function(){this.style.boxShadow="";});'
+        'el.addEventListener("drop",function(e){'
+        'e.preventDefault();this.style.boxShadow="";'
+        'if(!dragUuid)return;'
+        'var target=this.getAttribute("data-uuid");'
+        'if(target===dragUuid)return;'
+        'var r=this.getBoundingClientRect();'
+        'var before=(e.clientY-r.top)<r.height/2;'
+        'var vis=cards().sort(function(a,b){'
+        'return parseInt(a.style.order||"1e9",10)-parseInt(b.style.order||"1e9",10);'
+        '}).map(function(x){return x.getAttribute("data-uuid");});'
+        'var from=vis.indexOf(dragUuid),to=vis.indexOf(target);'
+        'if(from<0||to<0)return;'
+        'vis.splice(from,1);'
+        'var at=before?to:to+1;'
+        'if(from<at)at--;'
+        'vis.splice(at,0,dragUuid);'
+        'var full=savedOrder.slice(),seen={},i,u;'
+        'for(i=0;i<full.length;i++)seen[full[i]]=1;'
+        'for(i=0;i<vis.length;i++){u=vis[i];if(!seen[u]){seen[u]=1;full.push(u);}}'
+        'var vset={};for(i=0;i<vis.length;i++)vset[vis[i]]=1;'
+        'var slots=[];for(i=0;i<full.length;i++)if(vset[full[i]])slots.push(i);'
+        'slots.sort(function(a,b){return a-b;});'
+        'for(i=0;i<slots.length;i++)full[slots[i]]=vis[i];'
+        'save(full);apply();});'
+        'el.addEventListener("dragend",function(){'
+        'this.style.opacity="";dragUuid=null;'
+        'cards().forEach(function(x){x.style.boxShadow="";});});'
+        '});}'
+        'var t=null;'
+        'new MutationObserver(function(){'
+        'if(t)clearTimeout(t);t=setTimeout(apply,300);'
+        '}).observe(document.documentElement,{childList:true,subtree:true});'
+        'load();'
+        '})();</script>'
+    )
     _INDEX_PATCH_CACHE = {}  # (theme_short, mtime_ns) -> patched html | None
 
     def _patched_index_html():
@@ -305,6 +401,8 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             return None
         if "</body>" in text and "bigcat-crypto-link" not in text:
             text = text.replace("</body>", _CRYPTO_LINK_SNIPPET + "</body>", 1)
+        if "</body>" in text and "bigcat-card-sort" not in text:
+            text = text.replace("</body>", _CARD_SORT_SNIPPET + "</body>", 1)
         _INDEX_PATCH_CACHE[key] = text
         return text
 
@@ -339,6 +437,10 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 return Response(patched, mimetype="application/javascript")
         if bn.startswith("Instance-") and p.endswith(".js"):
             patched = _patched_instance_js(p)
+            if patched is not None:
+                return Response(patched, mimetype="application/javascript")
+        if bn.startswith("index-") and p.endswith(".js"):
+            patched = _patched_index_js(p)
             if patched is not None:
                 return Response(patched, mimetype="application/javascript")
         return send_from_directory(_active_theme_dist() + "/assets", p)
@@ -1349,6 +1451,31 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     @app.route("/api/public")
     def api_public():
         return jsonify(rpc_get_public_settings({}))
+
+    @app.route("/api/public/server_card_order", methods=["GET"])
+    def public_server_card_order():
+        """前台服务器卡片手动排序（公开读写，仅视觉顺序）。"""
+        try:
+            order = json.loads(store.get_setting("server_card_order", "[]"))
+        except Exception:
+            order = []
+        if not isinstance(order, list):
+            order = []
+        return jsonify({"order": [str(u) for u in order if str(u).strip()]})
+
+    @app.route("/api/public/server_card_order", methods=["POST"])
+    def public_server_card_order_save():
+        data = request.get_json(force=True, silent=True) or {}
+        order = data.get("order") or []
+        order = [str(u) for u in order if str(u).strip()]
+        # 去重保序
+        seen, clean = set(), []
+        for u in order:
+            if u not in seen:
+                seen.add(u)
+                clean.append(u)
+        store.set_setting("server_card_order", json.dumps(clean))
+        return jsonify({"ok": True})
 
     @app.route("/api/version")
     def api_version():
