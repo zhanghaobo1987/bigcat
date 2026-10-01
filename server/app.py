@@ -945,21 +945,22 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         """某节点某任务的探测行（v1.9.4 分布式探测）。
 
         优先取该节点 agent 自行上报的行（client_uuid=节点 uuid）；
-        该节点无上报时回退到主控侧探测行（client_uuid=''），兼容未升级的 agent。
-        取最新的 limit 条：数据量超过 limit 时保证拿到的是最近的数据，
-        而不是窗口最旧的一段。
+        该节点在整个窗口内无上报时回退到主控侧探测行（client_uuid=''），
+        兼容未升级的 agent。
+        v1.11.10 起在 SQL 侧按 client_uuid 过滤：数据量超过 limit 时均匀
+        抽样覆盖整个窗口。修复旧实现"先按 task LIMIT 再在 Python 按节点
+        过滤"的 bug——多节点混合写入时 limit 在混合数据上生效，长窗口下
+        每个节点只剩最近约 1.5 天的数据。
+        返回按时间升序（调用方依赖）。
         """
-        rows = store.ping_results(task_id, since_iso, limit=limit, desc=True)
-        rows = [r for r in rows
-                if (end_iso is None or (r.get("time") or "") <= end_iso)
-                and _parse_time(r.get("time")) is not None]
-        # 取数用 DESC（拿到最新的 limit 条），返回前按时间排回 ASC，
-        # 调用方（统计 latest/图表分桶）依赖时间升序。
+        cli = node_uuid or ""
+        rows = store.ping_results_for_client(task_id, cli, since_iso, end_iso,
+                                             limit=limit)
+        if cli and not rows:
+            rows = store.ping_results_for_client(task_id, "", since_iso, end_iso,
+                                                 limit=limit)
         rows.sort(key=lambda r: r.get("time") or "")
-        own = [r for r in rows if (r.get("client_uuid") or "") == (node_uuid or "")]
-        if own:
-            return own
-        return [r for r in rows if not (r.get("client_uuid") or "")]
+        return rows
 
     def _pct(sorted_vals, p):
         """已排序序列的百分位数（线性插值）。"""

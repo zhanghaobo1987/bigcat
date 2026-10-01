@@ -152,6 +152,8 @@ class Storage:
             if "client_uuid" not in cols:
                 cur.execute("ALTER TABLE ping_results ADD COLUMN client_uuid TEXT NOT NULL DEFAULT ''")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pingres_task_time ON ping_results(task_id, time)")
+            # v1.11.10：按 (任务, 节点, 时间) 查询的复合索引，供 ping_results_for_client 用
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pingres_task_client_time ON ping_results(task_id, client_uuid, time)")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ping_task_clients (
@@ -884,6 +886,36 @@ class Storage:
             rows = self._conn.execute(
                 f"""SELECT * FROM ping_results WHERE task_id = ? AND time >= ?
                    ORDER BY time {order} LIMIT ?""", (task_id, since_iso, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def ping_results_for_client(self, task_id: int, client_uuid: str, since_iso: str,
+                                until_iso: str = None, limit: int = 2000):
+        """某任务下指定节点（client_uuid）的探测记录，按时间升序返回。
+
+        v1.11.10 新增：SQL 侧直接按 client_uuid 过滤。数据量超过 limit 时
+        在 SQL 侧做均匀抽样（ROW_NUMBER 窗口函数），保证返回的点覆盖整个
+        [since, until] 窗口，而不是只取最新的一段。
+        修复旧逻辑"先按 task LIMIT 再在 Python 按节点过滤"导致的 bug：
+        多节点/主控混合写入时 limit 在混合数据上生效，长窗口只剩最近约 1.5 天。
+        client_uuid="" 时查询主控侧探测数据（兼容未上报的 agent）。
+        """
+        cli = client_uuid or ""
+        where = "task_id = ? AND client_uuid = ? AND time >= ?"
+        params = [task_id, cli, since_iso]
+        if until_iso:
+            where += " AND time <= ?"
+            params.append(until_iso)
+        # 均匀抽样：(rn*L)//cnt 递增的 L 个位置，恰好取 L 行且等距
+        with self._lock:
+            rows = self._conn.execute(
+                f"""SELECT id, task_id, time, latency_ms, ok, client_uuid FROM (
+                        SELECT *, ROW_NUMBER() OVER (ORDER BY time ASC, id ASC) AS rn,
+                               COUNT(*) OVER () AS cnt
+                        FROM ping_results WHERE {where}
+                    )
+                    WHERE cnt <= ? OR ((rn * ?) / cnt) != (((rn - 1) * ?) / cnt)
+                    ORDER BY time ASC, id ASC""",
+                params + [limit, limit, limit]).fetchall()
         return [dict(r) for r in rows]
 
     def ping_stats(self, since_iso: str):
