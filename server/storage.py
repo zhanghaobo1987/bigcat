@@ -542,7 +542,7 @@ class Storage:
     @staticmethod
     def _default_settings() -> dict:
         return {
-            "sitename": "BigCat Monitor",
+            "sitename": "BIGCat",
             "description": "A lightweight VPS monitor, Komari-compatible.",
             "theme": "LuminaPlus",
             "admin_password": "",  # set on first run via CLI
