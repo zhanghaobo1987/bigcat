@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 import uuid as uuid_lib
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -395,6 +396,49 @@ class Storage:
                 (client_uuid, since, until, limit),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # records 表可聚合的数值列白名单（query_records_bucketed 的 col 参数校验用）
+    RECORD_NUMERIC_COLS = (
+        "cpu", "gpu", "ram", "ram_total", "swap", "swap_total", "load",
+        "disk", "disk_total", "net_in", "net_out", "net_total_up",
+        "net_total_down", "traffic_up", "traffic_down", "process",
+        "connections", "connections_udp", "uptime",
+    )
+
+    def query_records_bucketed(self, client_uuid: str, since: str, until: str,
+                               col: str, start_ts: float, bucket_s: float,
+                               max_points: int = 500):
+        """按时间分桶聚合取 records，覆盖整个请求窗口。
+
+        旧的 query_records(ORDER BY time ASC LIMIT)在长窗口下只拿到最旧一段
+        数据，导致 7 天以上图表曲线挤在开头一小段。这里在 SQL 侧按
+        bucket_s 秒分桶，对 col 取均值，保证点数铺满整个窗口。
+        返回时间升序 [{"time","value","count"}]，time 为桶起点。
+        """
+        if col not in self.RECORD_NUMERIC_COLS:
+            raise ValueError(f"bad column: {col}")
+        bucket_s = max(1.0, float(bucket_s))
+        start_int = int(start_ts)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""SELECT CAST((strftime('%s', time) - ?) / ? AS INTEGER) AS bkt,
+                           AVG({col}), COUNT(*)
+                    FROM records
+                    WHERE client = ? AND time >= ? AND time <= ?
+                    GROUP BY bkt ORDER BY bkt LIMIT ?""",
+                (start_int, bucket_s, client_uuid, since, until, int(max_points)),
+            ).fetchall()
+        out = []
+        for bkt, avg, cnt in rows:
+            if bkt is None:
+                continue
+            t = datetime.fromtimestamp(start_int + bkt * bucket_s, tz=timezone.utc)
+            out.append({
+                "time": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "value": float(avg or 0),
+                "count": int(cnt),
+            })
+        return out
 
     def latest_record(self, client_uuid: str):
         with self._lock:

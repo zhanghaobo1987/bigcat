@@ -707,38 +707,32 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     # ============ v3 core end ============
 
     def _query_series(metric_key, entity_ids, start, end, max_points):
-        """Build queryMetrics-style series from the records table."""
+        """Build queryMetrics-style series from the records table.
+
+        在 SQL 侧按时间分桶聚合（query_records_bucketed），保证点数铺满
+        整个请求窗口。旧逻辑先 ORDER BY time ASC LIMIT 取最旧一段，
+        长窗口（7 天以上）下曲线会挤在开头一小段，看起来像没有数据。
+        """
         col = next((c for c, m in RECORD_METRIC_MAP.items() if m == metric_key), None)
         if col is None:
             return []
+        span = (end - start).total_seconds()
+        if span <= 0 or max_points <= 0:
+            return []
+        bucket = span / max_points
+        start_ts = start.timestamp()
         series = []
         for eid in entity_ids:
-            rows = store.query_records(
-                eid,
-                _iso(start),
-                _iso(end),
-                limit=max( max_points * 2, 2000),
-            )
-            points = [
-                {"time": r["time"], "value": float(r[col] or 0), "count": 1}
-                for r in rows
-            ]
-            # downsample to max_points
-            if len(points) > max_points and max_points > 0:
-                step = len(points) / max_points
-                sampled = []
-                i = 0.0
-                while int(i) < len(points):
-                    sampled.append(points[int(i)])
-                    i += step
-                points = sampled
+            points = store.query_records_bucketed(
+                eid, _iso(start), _iso(end), col, start_ts, bucket, max_points)
+            total = sum(p["count"] for p in points)
             series.append(
                 {
                     "metric_key": metric_key,
                     "entity_id": eid,
                     "type": METRIC_DEFS[metric_key]["type"],
                     "unit": METRIC_DEFS[metric_key]["unit"],
-                    "downsampled": len(rows) > max_points,
+                    "downsampled": total > max_points,
                     "fill_empty": False,
                     "max_points": max_points,
                     "count": len(points),
