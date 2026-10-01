@@ -401,8 +401,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             return None
         if "</body>" in text and "bigcat-crypto-link" not in text:
             text = text.replace("</body>", _CRYPTO_LINK_SNIPPET + "</body>", 1)
-        if "</body>" in text and "bigcat-card-sort" not in text:
-            text = text.replace("</body>", _CARD_SORT_SNIPPET + "</body>", 1)
+        # 卡片拖拽排序脚本暂时禁用（v1.12.0 导致空白页，根因排查中）
+        # if "</body>" in text and "bigcat-card-sort" not in text:
+        #     text = text.replace("</body>", _CARD_SORT_SNIPPET + "</body>", 1)
         _INDEX_PATCH_CACHE[key] = text
         return text
 
