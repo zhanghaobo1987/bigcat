@@ -980,6 +980,21 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             return [by_uuid[u] for u in bound if u in by_uuid]
         return list(clients)
 
+    def _auto_bind_ping_tasks(client_uuid: str) -> None:
+        """新节点默认加入所有启用的 ping 探测任务，无需手动绑定。
+
+        管理员仍可在后台 ping 任务中手动解绑某个节点。
+        """
+        try:
+            for t in store.list_ping_tasks():
+                if not t.get("enabled"):
+                    continue
+                bound = store.get_ping_task_clients(t.get("id"))
+                if client_uuid not in bound:
+                    store.set_ping_task_clients(t.get("id"), bound + [client_uuid])
+        except Exception:
+            pass
+
     def _ping_rows_for_node(task_id, node_uuid, since_iso, end_iso=None, limit=500):
         """某节点某任务的探测行（v1.9.4 分布式探测）。
 
@@ -1401,6 +1416,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def agent_register():
         data = request.get_json(force=True, silent=True) or {}
         client = store.add_client(name=data.get("name", ""))
+        _auto_bind_ping_tasks(client["uuid"])
         return jsonify({"uuid": client["uuid"], "token": client["token"]})
 
     @app.route("/api/agent/basicinfo", methods=["POST"])
@@ -1873,6 +1889,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def admin_client_add():
         data = request.get_json(force=True, silent=True) or {}
         client = store.add_client(name=data.get("name", ""))
+        _auto_bind_ping_tasks(client["uuid"])
         return jsonify(client)
 
     @app.route("/api/admin/client/<client_uuid>", methods=["POST"])
