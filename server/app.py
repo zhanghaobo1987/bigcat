@@ -263,7 +263,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def _patched_index_js(p):
         """返回打过补丁的主 bundle（bytes）；无需补丁/补丁不适用时返回 None。
 
-        给服务器卡片包装 div 注入 data-uuid，供拖拽排序脚本识别卡片对应节点。
+        1. 给服务器卡片包装 div 注入 data-uuid，供拖拽排序脚本识别卡片对应节点。
+        2. 流量重置日：trafficReset 优先使用 traffic_reset_day（后台可设每月几号），
+           未设置时回退到原逻辑（按 expired_at 到期日）。
         """
         dist = _active_theme_dist()
         full = os.path.join(dist, "assets", p)
@@ -284,7 +286,21 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         if old not in text:
             _INSTANCE_JS_PATCH_CACHE[key] = None
             return None
-        out = text.replace(old, new).encode("utf-8")
+        out = text.replace(old, new)
+        # 流量重置日补丁：优先使用后台设置的 traffic_reset_day（1-31）
+        old_reset = "trafficReset:Hu(r.expired_at,_)"
+        new_reset = (
+            "trafficReset:Hu(r.traffic_reset_day>0&&r.traffic_reset_day<32"
+            "?\"2000-01-\"+(\"0\"+r.traffic_reset_day).slice(-2):r.expired_at,_)"
+        )
+        if old_reset in out:
+            out = out.replace(old_reset, new_reset)
+        # 重置提示文案通用化（显式设置重置日时“默认按到期日”不准确）
+        old_title = "流量重置日：${d} · 默认按到期日，每月${r}日重置（不足该日取月末）"
+        new_title = "流量重置日：${d} · 每月${r}日重置（不足该日取月末）"
+        if old_title in out:
+            out = out.replace(old_title, new_title)
+        out = out.encode("utf-8")
         _INSTANCE_JS_PATCH_CACHE[key] = out
         return out
 

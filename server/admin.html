@@ -689,6 +689,7 @@
         <option value="1099511627776">T</option>
       </select></div>
     </div>
+    <label>流量重置日（每月几号，空或 0 为按到期日）</label><input id="edit-reset-day" type="number" min="0" max="31" step="1" placeholder="如 1">
     <label>离线宽限（秒，0 为使用全局设置）</label><input id="edit-grace" type="number" min="0" step="10">
     <div class="form2">
       <div><label class="row" style="justify-content:flex-start">
@@ -1386,6 +1387,7 @@ window.openEdit = uuid => {
   $('edit-expired').value = normDateInput(c.expired_at);
   $('edit-renew').checked = !!c.auto_renewal;
   setLimit(c.traffic_limit || 0, c.traffic_limit_type || 'sum');
+  $('edit-reset-day').value = c.traffic_reset_day || '';
   $('edit-grace').value = c.offline_grace || '';
   $('edit-hidden').checked = !!c.hidden;
   $('edit-noff').checked = c.notify_offline !== 0;
@@ -1406,6 +1408,7 @@ $('btn-edit-save').onclick = async () => {
     auto_renewal: $('edit-renew').checked ? 1 : 0,
     traffic_limit: limitBytes(),
     traffic_limit_type: $('edit-limit-type').value,
+    traffic_reset_day: Math.min(31, Math.max(0, parseInt($('edit-reset-day').value) || 0)),
     offline_grace: parseInt($('edit-grace').value) || 0,
     hidden: $('edit-hidden').checked ? 1 : 0,
     notify_offline: $('edit-noff').checked ? 1 : 0,

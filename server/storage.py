@@ -59,6 +59,7 @@ class Storage:
                     hidden          INTEGER DEFAULT 0,
                     traffic_limit   INTEGER DEFAULT 0,
                     traffic_limit_type TEXT DEFAULT '',
+                    traffic_reset_day INTEGER DEFAULT 0,
                     created_at      TEXT NOT NULL,
                     updated_at      TEXT NOT NULL,
                     last_report_at  TEXT
@@ -238,6 +239,7 @@ class Storage:
                 "report_enabled": "INTEGER DEFAULT 0",
                 "report_types": "TEXT DEFAULT 'daily,weekly,monthly'",
                 "traffic_limit_type": "TEXT DEFAULT ''",
+                "traffic_reset_day": "INTEGER DEFAULT 0",
             }.items():
                 if col not in cols:
                     self._conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {ddl}")
@@ -333,7 +335,7 @@ class Storage:
             "public_remark", "mem_total", "swap_total", "disk_total", "version",
             "weight", "price", "billing_cycle", "auto_renewal", "currency",
             "expired_at", "group", "tags", "hidden", "traffic_limit",
-            "traffic_limit_type",
+            "traffic_limit_type", "traffic_reset_day",
             "offline_grace", "notify_offline", "report_enabled", "report_types",
         }
         sets, vals = [], []
@@ -598,7 +600,7 @@ class Storage:
                        "region", "remark", "public_remark", "mem_total", "swap_total",
                        "disk_total", "version", "weight", "price", "billing_cycle",
                        "auto_renewal", "currency", "expired_at", "group_name", "tags",
-                       "hidden", "traffic_limit", "created_at", "updated_at")
+                       "hidden", "traffic_limit", "traffic_reset_day", "created_at", "updated_at")
         with self._lock:
             cur = self._conn
             cur.execute("BEGIN")
