@@ -1057,7 +1057,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             _iso(datetime.now(timezone.utc)),
             limit=600,
         )
-        return [_report_from_record(client_uuid, r) for r in rows]
+        # Komari 格式：{count, records: [...]}（第三方主题按此消费）
+        records = [_report_from_record(client_uuid, r) for r in rows]
+        return {"count": len(records), "records": records}
 
     def rpc_common_get_records(params):
         """common:getRecords — Komari 兼容。
@@ -1691,10 +1693,15 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
 
     @app.route("/api/records/load")
     def api_records_load():
-        return jsonify(rpc_get_records_by_uuid({
+        # Komari 标准包装 {status, data: {records, count}}；
+        # 顶层同时附带 count/records，兼容 LuminaPlus 的顶层解析。
+        records = rpc_get_records_by_uuid({
             "uuid": request.args.get("uuid", ""),
             "hours": request.args.get("hours", "4"),
-        }))
+        })
+        return jsonify({"status": "success",
+                        "data": {"records": records, "count": len(records)},
+                        "count": len(records), "records": records})
 
     @app.route("/api/records/ping")
     def api_records_ping():
