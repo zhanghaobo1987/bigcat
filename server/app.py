@@ -1403,6 +1403,26 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
     def rpc_ping(params):
         return "pong"
 
+    def rpc_common_get_nodes(params):
+        """common:getNodes — Komari 兼容格式：返回以 uuid 为键的字典。
+
+        BigCat 自带主题调用后会做 Object.values() 转列表，
+        第三方 Komari 主题（如 Emerald）直接按字典消费。
+        """
+        params = params or {}
+        uuid = params.get("uuid") or ""
+        out = {}
+        for c in store.list_clients():
+            if c.get("hidden"):
+                continue
+            node = _public_node(c)
+            out[node["uuid"]] = node
+        if uuid:
+            if uuid not in out:
+                raise ValueError("Node not found")
+            return out[uuid]
+        return out
+
     RPC_METHODS = {
         "public:getNodesInformation": rpc_get_nodes_information,
         "public:getPublicSettings": rpc_get_public_settings,
@@ -1419,7 +1439,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         # Komari Emerald 等第三方主题使用的命名
         "rpc.ping": rpc_ping,
         "rpc.getVersion": rpc_get_version,
-        "common:getNodes": rpc_get_nodes_information,
+        "common:getNodes": rpc_common_get_nodes,
         "common:getNodeRecentStatus": rpc_get_client_recent_records,
         "common:getPublicInfo": rpc_get_public_settings,
         "common:getBackendVersion": rpc_get_version,
