@@ -39,10 +39,14 @@
   aside h1 { font-size:17px; margin:0 0 4px 8px; }
   aside .ver { font-size:11px; color:var(--muted); margin:0 0 12px 8px; }
   aside nav button { display:block; width:100%; text-align:left; background:transparent;
-          border:0; color:var(--muted); padding:9px 12px; border-radius:8px; font-size:14px; cursor:pointer; }
+          border:0; color:var(--muted); padding:9px 12px; border-radius:8px; font-size:14px; cursor:grab; }
   aside nav button:hover { background:#161e29; color:var(--text); }
   aside nav button.active { background:#1c2942; color:var(--accent); }
   aside nav button .ico { margin-right:8px; }
+  aside nav button.dragging { opacity:.4; }
+  aside nav button.drag-over { outline:2px dashed var(--warn); outline-offset:-2px; }
+  .nav-foot { margin-top:10px; padding:0 8px; display:flex; gap:6px; }
+  .nav-foot button { flex:1; }
   aside .grp { font-size:11px; color:var(--muted); margin:14px 8px 6px; letter-spacing:1px; }
   main { flex:1; padding:28px; max-width:1080px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
@@ -249,8 +253,9 @@
     <a class="brand" href="/" target="_blank" rel="noopener" title="在新标签页打开前台监控页"><h1>🐱 BigCat</h1></a>
     <p class="ver" id="side-ver"></p>
     <nav id="nav"></nav>
-    <div style="margin-top:16px;padding:0 8px">
-      <button class="ghost small" id="btn-logout" style="width:100%">退出登录</button>
+    <div class="nav-foot">
+      <button class="ghost small" id="btn-nav-reset" title="恢复左侧菜单默认顺序">↺ 菜单</button>
+      <button class="ghost small" id="btn-logout">退出登录</button>
     </div>
   </aside>
   <main>
@@ -1032,10 +1037,55 @@ const PAGES = [
 let curPage = 'dashboard';
 function buildNav() {
   const perms = (ME && ME.perms) || [];
-  const visible = PAGES.filter(([k]) => k === 'account' || k === 'about' || perms.includes(k));
+  let visible = PAGES.filter(([k]) => k === 'account' || k === 'about' || perms.includes(k));
+  // 应用已保存的菜单顺序
+  if (Array.isArray(navOrder) && navOrder.length) {
+    const map = {};
+    visible.forEach(p => map[p[0]] = p);
+    const ordered = [];
+    navOrder.forEach(k => { if (map[k]) { ordered.push(map[k]); delete map[k]; } });
+    Object.values(map).forEach(p => ordered.push(p));
+    visible = ordered;
+  }
   $('nav').innerHTML = visible.map(([k, ico, name]) =>
-    `<button data-p="${k}" class="${k===curPage?'active':''}"><span class="ico">${ico}</span>${name}</button>`).join('');
-  document.querySelectorAll('#nav button').forEach(b => b.onclick = () => go(b.dataset.p));
+    `<button data-p="${k}" draggable="true" title="拖动可调整顺序" class="${k===curPage?'active':''}"><span class="ico">${ico}</span>${name}</button>`).join('');
+  const btns = document.querySelectorAll('#nav button');
+  btns.forEach(b => b.onclick = () => go(b.dataset.p));
+  // 拖拽排序
+  let dragEl = null;
+  btns.forEach(b => {
+    b.addEventListener('dragstart', e => {
+      dragEl = b;
+      e.dataTransfer.effectAllowed = 'move';
+      b.classList.add('dragging');
+    });
+    b.addEventListener('dragend', () => {
+      b.classList.remove('dragging');
+      dragEl = null;
+      btns.forEach(x => x.classList.remove('drag-over'));
+    });
+    b.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (!dragEl || dragEl === b) return;
+      b.classList.add('drag-over');
+      const r = b.getBoundingClientRect();
+      const after = (e.clientY - r.top) > r.height / 2;
+      if (after) b.after(dragEl); else b.before(dragEl);
+    });
+    b.addEventListener('dragleave', () => b.classList.remove('drag-over'));
+    b.addEventListener('drop', e => {
+      e.preventDefault();
+      const order = [...document.querySelectorAll('#nav button')].map(x => x.dataset.p);
+      api('/api/admin/nav_order', 'POST', {order});
+    });
+  });
+}
+let navOrder = [];
+async function loadNavOrder() {
+  try {
+    const {status, data} = await api('/api/admin/nav_order');
+    if (status === 200 && data && Array.isArray(data.order)) navOrder = data.order;
+  } catch(e) {}
 }
 const LOADERS = {};
 let ME = null; /* 当前登录用户身份：{username, role, is_super, perms[], can_manage_users} */
@@ -1208,6 +1258,7 @@ async function enterMain(data) {
     can_manage_users: !!(st && st.can_manage_users),
   };
   show('view-main');
+  await loadNavOrder();
   buildNav(); go('dashboard');
   loadSkin();
 }
@@ -1410,6 +1461,12 @@ $('btn-dash-reset').onclick = async () => {
   if (!confirm('恢复仪表板默认排版？当前自定义顺序将被清除。')) return;
   await api('/api/admin/dashboard_order', 'POST', {order: []});
   location.reload();
+};
+$('btn-nav-reset').onclick = async () => {
+  if (!confirm('恢复左侧菜单默认顺序？')) return;
+  await api('/api/admin/nav_order', 'POST', {order: []});
+  navOrder = [];
+  buildNav();
 };
 
 /* ---------------- 服务器 ---------------- */

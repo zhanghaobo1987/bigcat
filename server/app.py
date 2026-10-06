@@ -2620,6 +2620,36 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         store.set_setting("admin_dashboard_order", json.dumps(clean))
         return jsonify({"ok": True})
 
+    @app.route("/api/admin/nav_order", methods=["GET"])
+    def admin_nav_order():
+        """左侧菜单排序（仅视觉顺序，按登录用户分别保存）。"""
+        me = _login_user()
+        key = f"admin_nav_order_{me['username']}" if me else "admin_nav_order"
+        try:
+            order = json.loads(store.get_setting(key, "[]"))
+        except Exception:
+            order = []
+        if not isinstance(order, list):
+            order = []
+        return jsonify({"order": [str(x) for x in order if str(x).strip()]})
+
+    @app.route("/api/admin/nav_order", methods=["POST"])
+    def admin_nav_order_save():
+        me = _login_user()
+        if not me:
+            return jsonify({"error": "unauthorized"}), 401
+        key = f"admin_nav_order_{me['username']}"
+        data = request.get_json(force=True, silent=True) or {}
+        order = data.get("order") or []
+        order = [str(x) for x in order if str(x).strip()]
+        seen, clean = set(), []
+        for x in order:
+            if x not in seen:
+                seen.add(x)
+                clean.append(x)
+        store.set_setting(key, json.dumps(clean))
+        return jsonify({"ok": True})
+
     @app.route("/api/admin/stats/ping")
     @_require_perm("dashboard")
     def admin_stats_ping():
