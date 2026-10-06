@@ -137,6 +137,8 @@
              margin:8px 0; user-select:all; }
   .row { display:flex; gap:8px; align-items:center; }
   .row input, .row select { flex:1; }
+  label.row input[type=checkbox] { flex:0 0 auto; } /* 勾选框贴近文字，不被拉伸 */
+  .checklist .sel-all, .chk-list .sel-all { font-weight:600; color:var(--accent); }
   .token { font-family:monospace; font-size:12px; }
   .hidden { display:none !important; }
   .badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:12px; white-space:nowrap; }
@@ -1768,15 +1770,41 @@ function pingBoundName(uuid) {
   const n = (pingNodesCache || []).find(x => x.uuid === uuid);
   return n ? (n.name || n.uuid.slice(0, 8)) : uuid.slice(0, 8);
 }
+/* ---------------- 服务器勾选列表：全选 ---------------- */
+function nodeChecksHTML(nodes, selected, labelFn) {
+  const sel = new Set(selected || []);
+  const allChecked = nodes.length > 0 && nodes.every(n => sel.has(n.uuid));
+  const items = nodes.map(n =>
+    `<label><input type="checkbox" value="${esc(n.uuid)}"${sel.has(n.uuid) ? ' checked' : ''}> ${labelFn(n)}</label>`
+  ).join('');
+  return `<label class="sel-all"><input type="checkbox" data-sel-all${allChecked ? ' checked' : ''}> 全选</label>` + items;
+}
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.matches('[data-sel-all]')) {
+    const box = t.closest('.checklist, .chk-list');
+    if (box) box.querySelectorAll('input[type=checkbox]:not([data-sel-all])').forEach(c => c.checked = t.checked);
+    return;
+  }
+  if (t.matches('.checklist input[type=checkbox], .chk-list input[type=checkbox]')) {
+    const box = t.closest('.checklist, .chk-list');
+    const all = [...box.querySelectorAll('input[type=checkbox]:not([data-sel-all])')];
+    const selAll = box.querySelector('[data-sel-all]');
+    if (selAll && all.length) {
+      const n = all.filter(c => c.checked).length;
+      selAll.checked = n === all.length;
+      selAll.indeterminate = n > 0 && n < all.length;
+    }
+  }
+});
+
 async function renderPingClients(selected) {
   const box = $('ping-clients');
   box.innerHTML = '<span class="muted">加载中…</span>';
   const nodes = await pingNodes();
-  const sel = new Set(selected || []);
-  box.innerHTML = nodes.length ? nodes.map(n =>
-    `<label><input type="checkbox" value="${esc(n.uuid)}"${sel.has(n.uuid) ? ' checked' : ''}>
-     <span>${esc(n.name || n.uuid.slice(0, 8))} <small>${esc(n.ipv4 || n.ipv6 || '')}</small></span></label>`
-  ).join('') : '<span class="muted">暂无节点</span>';
+  box.innerHTML = nodes.length ? nodeChecksHTML(nodes, selected, n =>
+    `<span>${esc(n.name || n.uuid.slice(0, 8))} <small>${esc(n.ipv4 || n.ipv6 || '')}</small></span>`
+  ) : '<span class="muted">暂无节点</span>';
 }
 async function loadPing() {
   const {status, data} = await api('/api/admin/ping/tasks');
@@ -1825,7 +1853,7 @@ window.openPingEdit = id => {
 $('btn-ping-cancel').onclick = closeModals;
 $('btn-ping-save').onclick = async () => {
   const id = $('ping-id').value;
-  const clients = [...document.querySelectorAll('#ping-clients input[type=checkbox]:checked')].map(c => c.value);
+  const clients = [...document.querySelectorAll('#ping-clients input[type=checkbox]:checked:not([data-sel-all])')].map(c => c.value);
   const body = {
     name: $('ping-name').value.trim(), target: $('ping-target').value.trim(),
     type: $('ping-type').value, interval_sec: $('ping-interval').value,
@@ -1882,7 +1910,7 @@ async function loadAlerts() {
 LOADERS.alerts = loadAlerts;
 function alertNodeChecks(selected) {
   $('alert-nodes').innerHTML = nodesCache.length
-    ? nodesCache.map(c => `<label><input type="checkbox" value="${esc(c.uuid)}" ${selected.includes(c.uuid)?'checked':''}> ${esc(c.name||c.uuid.slice(0,8))}</label>`).join('')
+    ? nodeChecksHTML(nodesCache, selected, c => esc(c.name || c.uuid.slice(0, 8)))
     : '<span class="muted">暂无节点（将应用于全部节点）</span>';
 }
 $('btn-add-alert').onclick = async () => {
@@ -1909,7 +1937,7 @@ window.openAlertEdit = async id => {
 $('btn-alert-cancel').onclick = closeModals;
 $('btn-alert-save').onclick = async () => {
   const id = $('alert-id').value;
-  const clients = [...document.querySelectorAll('#alert-nodes input:checked')].map(x => x.value);
+  const clients = [...document.querySelectorAll('#alert-nodes input:checked:not([data-sel-all])')].map(x => x.value);
   const body = {
     name: $('alert-name').value.trim(), metric: $('alert-metric').value,
     threshold: $('alert-threshold').value, ratio: $('alert-ratio').value,
@@ -2092,13 +2120,13 @@ async function loadExec() {
   const {status, data} = await api('/api/admin/clients');
   if (status === 401) return needLogin();
   $('exec-nodes').innerHTML = data.length
-    ? data.map(c => `<label><input type="checkbox" value="${esc(c.uuid)}"> ${esc(c.name || c.uuid.slice(0,8))} ${c.online?'':'<span class="muted">(离线)</span>'}</label>`).join('')
+    ? nodeChecksHTML(data, [], c => `${esc(c.name || c.uuid.slice(0, 8))} ${c.online ? '' : '<span class="muted">(离线)</span>'}`)
     : '<span class="muted">暂无节点</span>';
   loadExecHistory();
 }
 LOADERS.exec = loadExec;
 $('btn-exec-run').onclick = async () => {
-  const uuids = [...document.querySelectorAll('#exec-nodes input:checked')].map(x => x.value);
+  const uuids = [...document.querySelectorAll('#exec-nodes input:checked:not([data-sel-all])')].map(x => x.value);
   const command = $('exec-cmd').value.trim();
   $('exec-err').textContent = '';
   if (!uuids.length) { $('exec-err').textContent = '请选择至少一个节点'; return; }
