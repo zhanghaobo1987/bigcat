@@ -98,6 +98,7 @@ class Storage:
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_records_client ON records(client)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_records_time ON records(time)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_records_client_time ON records(client, time)")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS settings (
@@ -250,6 +251,12 @@ class Storage:
             }.items():
                 if col not in rcols:
                     self._conn.execute(f"ALTER TABLE records ADD COLUMN {col} {ddl}")
+            # v1.13.1: 前台按节点查时间范围（图表/流量）高频，加复合索引
+            idxs = {r["name"] for r in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE tbl_name='records' AND type='index'").fetchall()}
+            if "idx_records_client_time" not in idxs:
+                self._conn.execute(
+                    "CREATE INDEX idx_records_client_time ON records(client, time)")
             # v1.9.8: sessions 记录登录用户身份
             scols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)").fetchall()}
             for col, ddl in {
