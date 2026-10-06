@@ -45,8 +45,13 @@
   aside nav button .ico { margin-right:8px; }
   aside nav button.dragging { opacity:.4; }
   aside nav button.drag-over { outline:2px dashed var(--warn); outline-offset:-2px; }
-  .nav-foot { margin-top:10px; padding:0 8px; display:flex; gap:6px; }
-  .nav-foot button { flex:1; }
+  .nav-foot-col { margin-top:10px; padding:0 8px; display:flex; flex-direction:column; gap:6px; }
+  .nav-foot-col button { width:100%; }
+  #btn-logout { margin-top:2px; }
+  .nav-arrow { cursor:pointer; padding:1px 7px; margin-right:2px; border-radius:5px;
+    color:var(--muted); font-size:12px; border:1px solid transparent; }
+  .nav-arrow:hover { background:var(--accent); color:#fff; }
+  #nav button.nav-editing { cursor:default; }
   aside .grp { font-size:11px; color:var(--muted); margin:14px 8px 6px; letter-spacing:1px; }
   main { flex:1; padding:28px; max-width:1080px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
@@ -254,10 +259,12 @@
   <aside>
     <a class="brand" href="/" target="_blank" rel="noopener" title="在新标签页打开前台监控页"><h1>🐱 BigCat</h1></a>
     <p class="ver" id="side-ver"></p>
-    <nav id="nav"></nav>
-    <div class="nav-foot">
-      <button class="ghost small" id="btn-nav-reset" title="恢复左侧菜单默认顺序">恢复排序</button>
-      <button class="ghost small" id="btn-logout">退出登录</button>
+    <nav id=\"nav\"></nav>
+    <div class=\"nav-foot-col\">
+      <button class=\"ghost small\" id=\"btn-nav-edit\">调整排序</button>
+      <button class=\"ghost small hidden\" id=\"btn-nav-save\">保存排序</button>
+      <button class=\"ghost small hidden\" id=\"btn-nav-reset2\" title=\"恢复左侧菜单默认顺序\">恢复默认</button>
+      <button class=\"ghost small\" id=\"btn-logout\">退出登录</button>
     </div>
   </aside>
   <main>
@@ -1037,6 +1044,7 @@ const PAGES = [
   ['logs', '📜', '系统日志'], ['about', 'ℹ️', '关于'],
 ];
 let curPage = 'dashboard';
+let navEditMode = false;
 function buildNav() {
   const perms = (ME && ME.perms) || [];
   let visible = PAGES.filter(([k]) => k === 'account' || k === 'about' || perms.includes(k));
@@ -1049,39 +1057,49 @@ function buildNav() {
     Object.values(map).forEach(p => ordered.push(p));
     visible = ordered;
   }
-  $('nav').innerHTML = visible.map(([k, ico, name]) =>
-    `<button data-p="${k}" draggable="true" title="拖动可调整顺序" class="${k===curPage?'active':''}"><span class="ico">${ico}</span>${name}</button>`).join('');
-  const btns = document.querySelectorAll('#nav button');
-  btns.forEach(b => b.onclick = () => go(b.dataset.p));
-  // 拖拽排序
-  let dragEl = null;
-  btns.forEach(b => {
-    b.addEventListener('dragstart', e => {
-      dragEl = b;
-      e.dataTransfer.effectAllowed = 'move';
-      b.classList.add('dragging');
-    });
-    b.addEventListener('dragend', () => {
-      b.classList.remove('dragging');
-      dragEl = null;
-      btns.forEach(x => x.classList.remove('drag-over'));
-    });
-    b.addEventListener('dragover', e => {
-      e.preventDefault();
-      if (!dragEl || dragEl === b) return;
-      b.classList.add('drag-over');
-      const r = b.getBoundingClientRect();
-      const after = (e.clientY - r.top) > r.height / 2;
-      if (after) b.after(dragEl); else b.before(dragEl);
-    });
-    b.addEventListener('dragleave', () => b.classList.remove('drag-over'));
-    b.addEventListener('drop', e => {
-      e.preventDefault();
-      const order = [...document.querySelectorAll('#nav button')].map(x => x.dataset.p);
-      api('/api/admin/nav_order', 'POST', {order});
-    });
+  $('nav').innerHTML = visible.map(([k, ico, name]) => {
+    const arrows = navEditMode
+      ? `<span class="nav-arrow" data-act="up" data-p="${k}" title="上移">▲</span><span class="nav-arrow" data-act="down" data-p="${k}" title="下移">▼</span>`
+      : '';
+    return `<button data-p="${k}" class="${k===curPage?'active':''}${navEditMode?' nav-editing':''}">${arrows}<span class="ico">${ico}</span>${name}</button>`;
+  }).join('');
+  document.querySelectorAll('#nav > button').forEach(b => {
+    if (!navEditMode) b.onclick = () => go(b.dataset.p);
+  });
+  document.querySelectorAll('#nav .nav-arrow').forEach(a => {
+    a.onclick = e => { e.stopPropagation(); moveNavItem(a.dataset.p, a.dataset.act === 'up' ? -1 : 1); };
   });
 }
+function moveNavItem(pageKey, dir) {
+  const btns = [...document.querySelectorAll('#nav > button')];
+  const idx = btns.findIndex(b => b.dataset.p === pageKey);
+  const ni = idx + dir;
+  if (idx < 0 || ni < 0 || ni >= btns.length) return;
+  const nav = $('nav');
+  if (dir < 0) nav.insertBefore(btns[idx], btns[ni]);
+  else nav.insertBefore(btns[idx], btns[ni].nextSibling);
+}
+function setNavEdit(on) {
+  navEditMode = on;
+  $('btn-nav-edit').classList.toggle('hidden', on);
+  $('btn-nav-save').classList.toggle('hidden', !on);
+  $('btn-nav-reset2').classList.toggle('hidden', !on);
+  buildNav();
+}
+$('btn-nav-edit').onclick = () => setNavEdit(true);
+$('btn-nav-save').onclick = async () => {
+  const order = [...document.querySelectorAll('#nav > button')].map(x => x.dataset.p);
+  navOrder = order;
+  await api('/api/admin/nav_order', 'POST', {order});
+  toast('菜单顺序已保存');
+  setNavEdit(false);
+};
+$('btn-nav-reset2').onclick = async () => {
+  if (!confirm('恢复左侧菜单默认顺序？')) return;
+  await api('/api/admin/nav_order', 'POST', {order: []});
+  navOrder = [];
+  setNavEdit(false);
+};
 let navOrder = [];
 async function loadNavOrder() {
   try {
@@ -1464,12 +1482,7 @@ $('btn-dash-reset').onclick = async () => {
   await api('/api/admin/dashboard_order', 'POST', {order: []});
   location.reload();
 };
-$('btn-nav-reset').onclick = async () => {
-  if (!confirm('恢复左侧菜单默认顺序？')) return;
-  await api('/api/admin/nav_order', 'POST', {order: []});
-  navOrder = [];
-  buildNav();
-};
+/* (菜单排序按钮逻辑见上方的 setNavEdit / btn-nav-save / btn-nav-reset2) */
 
 /* ---------------- 服务器 ---------------- */
 let nodesCache = [];
