@@ -359,7 +359,7 @@
         </div>
         <p class="muted">当某指标超过阈值的样本比例 ≥ 触发比例时，经通知渠道告警；每条规则按检查间隔去重。</p>
         <table>
-          <thead><tr><th>规则</th><th>指标</th><th>阈值</th><th>触发比例</th><th>检查间隔</th><th>适用节点</th><th>启用</th><th>操作</th></tr></thead>
+          <thead><tr><th>规则</th><th>指标</th><th>阈值</th><th>触发比例</th><th>检查间隔</th><th>监控节点</th><th>启用</th><th>操作</th></tr></thead>
           <tbody id="alerts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table>
       </div>
@@ -865,7 +865,7 @@
       <div><label>触发比例（0.1-1）</label><input id="alert-ratio" type="number" min="0.1" max="1" step="0.1" value="0.8"></div>
       <div><label>检查间隔（分钟）</label><input id="alert-interval" type="number" min="1" value="2"></div>
     </div>
-    <label>适用节点（不选 = 全部节点）</label>
+    <label>监控节点（不选 = 全部节点）</label>
     <div class="chk-list" id="alert-nodes"><span class="muted">加载中…</span></div>
     <label class="row" style="justify-content:flex-start">
       <input id="alert-enabled" type="checkbox" style="width:16px" checked> <span>启用</span></label>
@@ -1894,14 +1894,25 @@ async function loadAlerts() {
   const {status, data} = await api('/api/admin/alerts');
   if (status === 401) return needLogin();
   alertCache = data;
+  if (!nodesCache.length) {
+    try { const r = await api('/api/admin/clients'); nodesCache = r.data || []; } catch(e) {}
+  }
+  const nameOf = {};
+  nodesCache.forEach(c => nameOf[c.uuid] = c.name || c.uuid.slice(0, 8));
   const tb = $('alerts-body');
   tb.innerHTML = data.length ? data.map(r => {
-    let scope = '全部节点';
-    try { const cl = JSON.parse(r.clients || '[]'); if (cl.length) scope = cl.length + ' 个节点'; } catch(e) {}
+    let scope = '', full = '';
+    try {
+      const cl = JSON.parse(r.clients || '[]');
+      const list = cl.length ? cl : Object.keys(nameOf); // 不选 = 全部节点
+      const names = list.map(u => nameOf[u] || u.slice(0, 8));
+      full = names.join('、');
+      scope = full.length > 40 ? esc(full.slice(0, 40)) + '…' : esc(full);
+    } catch(e) { scope = '<span class="muted">—</span>'; }
     return `<tr>
       <td>${esc(r.name)}</td><td>${METRIC_NAMES[r.metric] || r.metric}</td>
       <td>&gt; ${r.threshold}%</td><td>${Math.round(r.ratio * 100)}%</td>
-      <td>${r.interval_min} 分钟</td><td>${scope}</td>
+      <td>${r.interval_min} 分钟</td><td title="${esc(full)}">${scope}</td>
       <td><span class="badge ${r.enabled?'on':'off'}">${r.enabled?'启用':'停用'}</span></td>
       <td><button class="ghost small" onclick="openAlertEdit(${r.id})">编辑</button>
         <button class="danger small" onclick="delAlert(${r.id},'${esc(r.name)}')">删除</button></td></tr>`;
