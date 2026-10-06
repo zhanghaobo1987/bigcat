@@ -1135,6 +1135,57 @@ class Storage:
         return {"cpu": round(row["cpu"] or 0, 2), "mem": round(row["mem"] or 0, 2),
                 "last": row["last"] or ""}
 
+    def peak_metrics(self, client_uuid: str, since_iso: str):
+        """各指标峰值及出现时间（供仪表板排行展示）。"""
+        out = {}
+        with self._lock:
+            q = ("SELECT {col}, time FROM records WHERE client = ? AND time >= ? "
+                 "ORDER BY {col} DESC LIMIT 1")
+            r = self._conn.execute(q.format(col="cpu"),
+                                   (client_uuid, since_iso)).fetchone()
+            out["peak_cpu"] = round(r[0] or 0, 1)
+            out["peak_cpu_at"] = r[1] or ""
+            r = self._conn.execute(
+                q.format(col="CASE WHEN ram_total > 0 THEN ram*100.0/ram_total ELSE 0 END"),
+                (client_uuid, since_iso)).fetchone()
+            out["peak_mem"] = round(r[0] or 0, 1)
+            out["peak_mem_at"] = r[1] or ""
+            r = self._conn.execute(q.format(col="net_out"),
+                                   (client_uuid, since_iso)).fetchone()
+            out["peak_up"] = round(r[0] or 0, 1)
+            out["peak_up_at"] = r[1] or ""
+            r = self._conn.execute(q.format(col="net_in"),
+                                   (client_uuid, since_iso)).fetchone()
+            out["peak_down"] = round(r[0] or 0, 1)
+            out["peak_down_at"] = r[1] or ""
+        return out
+
+    def ping_rank_stats(self, since_iso: str):
+        """各 (任务, 节点) 的平均延迟、抖动(标准差)、丢包率，供延迟排行。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT task_id, client_uuid,
+                          AVG(latency_ms) AS avg_lat,
+                          AVG(latency_ms*latency_ms) AS avg_sq,
+                          SUM(ok) AS ok_n, COUNT(*) AS n
+                   FROM ping_results WHERE time >= ?
+                   GROUP BY task_id, client_uuid""",
+                (since_iso,)).fetchall()
+        out = []
+        for r in rows:
+            n = r["n"] or 0
+            avg = r["avg_lat"] or 0
+            var = max(0, (r["avg_sq"] or 0) - avg * avg)
+            out.append({
+                "task_id": r["task_id"],
+                "client_uuid": r["client_uuid"],
+                "avg_lat": round(avg, 1),
+                "jitter": round(var ** 0.5, 2),
+                "loss": round((1 - (r["ok_n"] or 0) / n) * 100, 1) if n else 0,
+                "n": n,
+            })
+        return out
+
     def traffic_series(self, since_iso: str, until_iso: str, bucket_sec: int = 900):
         """Aggregate up/down rates into time buckets across all clients."""
         with self._lock:

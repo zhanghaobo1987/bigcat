@@ -68,6 +68,32 @@
   .ring-line { font-size:13px; margin-top:2px; }
   .ring-line b { font-size:15px; }
   .ring-line.bad { color:var(--danger); } .ring-line.warn { color:var(--warn); }
+  .dash-2col { display:grid; grid-template-columns:1.6fr 1fr; gap:12px; margin-bottom:16px; }
+  @media (max-width:1100px){ .dash-2col { grid-template-columns:1fr; } }
+  .card-hd { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .card-hd h2 { margin:0; display:flex; align-items:center; gap:8px; }
+  .card-hd .hd-ico { color:var(--muted); font-size:14px; }
+  .card-hd .hd-menu { color:var(--muted); cursor:pointer; font-size:14px; }
+  .rank-item { padding:10px 0; border-bottom:1px solid var(--border); }
+  .rank-item:last-child { border-bottom:none; }
+  .rank-top { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .rank-name { font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rank-val { font-size:15px; font-weight:700; flex:none; }
+  .rank-sub { font-size:12px; color:var(--muted); margin-top:2px; }
+  .rank-bar { height:6px; border-radius:3px; background:var(--border); margin-top:6px; overflow:hidden; }
+  .rank-fill { height:100%; border-radius:3px; transition:width .6s ease; }
+  .rank-total { font-size:12px; color:var(--muted); margin-top:4px; text-align:right; }
+  .lat3 { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  @media (max-width:900px){ .lat3 { grid-template-columns:1fr; } }
+  .lat-col h3 { font-size:13.5px; margin:0 0 8px; display:flex; align-items:center; justify-content:space-between; }
+  .lat-row { display:flex; align-items:baseline; justify-content:space-between; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .lat-row:last-child { border-bottom:none; }
+  .lat-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lat-val { flex:none; font-weight:700; }
+  .chart-legend { display:flex; align-items:center; gap:14px; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+  .chart-legend .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+  .chart-legend .dash { display:inline-block; width:14px; border-top:2px dashed; margin-right:4px; vertical-align:middle; }
+  .chart-total { font-size:13px; font-weight:700; }
   label { display:block; margin:12px 0 4px; color:var(--muted); font-size:13px; }
   input[type=text], input[type=password], input[type=number], select, textarea {
     width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--border);
@@ -220,9 +246,36 @@
     <section id="page-dashboard" class="page">
       <div class="ring-grid" id="dash-rings"></div>
       <div class="grid" id="dash-stats"></div>
-      <div class="card">
-        <h2>全网流量 <span class="muted">（近 24 小时，KB/s）</span></h2>
-        <canvas class="chart" id="traffic-chart"></canvas>
+      <div class="dash-2col">
+        <div class="card">
+          <div class="card-hd">
+            <h2>最近24小时流量</h2>
+            <div class="chart-legend" id="traffic-legend"></div>
+          </div>
+          <canvas class="chart" id="traffic-chart"></canvas>
+        </div>
+        <div class="card">
+          <div class="card-hd"><h2><span class="hd-ico">◔</span>平均 CPU 占用排行</h2><span class="hd-menu">☰</span></div>
+          <div id="dash-cpu-rank"><p class="muted">加载中…</p></div>
+        </div>
+      </div>
+      <div class="dash-2col">
+        <div class="card">
+          <div class="card-hd"><h2>流量消耗 Top 5</h2><span class="hd-menu">☰</span></div>
+          <div id="dash-traffic-top"><p class="muted">加载中…</p></div>
+        </div>
+        <div class="card">
+          <div class="card-hd"><h2><span class="hd-ico">▤</span>平均内存占用百分比排行</h2><span class="hd-menu">☰</span></div>
+          <div id="dash-mem-rank"><p class="muted">加载中…</p></div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-hd"><h2><span class="hd-ico">◌</span>延迟</h2></div>
+        <div class="lat3">
+          <div class="lat-col"><h3>延迟最稳定 <span class="hd-menu">☰</span></h3><div id="dash-lat-stable"><p class="muted">加载中…</p></div></div>
+          <div class="lat-col"><h3>延迟最不稳定 <span class="hd-menu">☰</span></h3><div id="dash-lat-unstable"><p class="muted">加载中…</p></div></div>
+          <div class="lat-col"><h3>丢包最高 <span class="hd-menu">☰</span></h3><div id="dash-lat-loss"><p class="muted">加载中…</p></div></div>
+        </div>
       </div>
       <div class="card">
         <h2>离线节点 <span class="muted" id="dash-th"></span></h2>
@@ -231,10 +284,6 @@
       <div class="card">
         <h2>即将到期 <span class="muted">（30 天内）</span></h2>
         <div id="dash-expiry"><p class="muted">加载中…</p></div>
-      </div>
-      <div class="card">
-        <h2>流量排行 <span class="muted">（近 24 小时）</span></h2>
-        <div id="dash-rank"><p class="muted">加载中…</p></div>
       </div>
     </section>
 
@@ -875,6 +924,62 @@ function fmtTime(iso) {
   if (s < 86400) return Math.floor(s/3600) + ' 小时前';
   return Math.floor(s/86400) + ' 天前';
 }
+function fmtPeakTime(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso); if (isNaN(d)) return iso;
+  const p = n => String(n).padStart(2, '0');
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  const now = new Date(), day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((day - dd) / 864e5);
+  if (diff === 0) return `今天 ${hm}`;
+  if (diff === 1) return `昨天 ${hm}`;
+  return `${d.getMonth()+1}/${d.getDate()} ${hm}`;
+}
+function drawTrafficChart(data) {
+  const canvas = $('traffic-chart'), labels = data.labels, up = data.up, down = data.down;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  // 累计值（假设每点间隔相等）
+  let cumUp = [], cumDown = [], su = 0, sd = 0;
+  const step = data.bucket_sec || 1800;
+  up.forEach((v,i) => { su += v * step; cumUp.push(su); });
+  down.forEach((v,i) => { sd += v * step; cumDown.push(sd); });
+  const maxRate = Math.max(1, ...up, ...down);
+  const maxCum = Math.max(1, su, sd);
+  const px = i => 8 + (w - 16) * i / Math.max(1, labels.length - 1);
+  const pyR = v => h - 24 - (h - 52) * v / maxRate;
+  const pyC = v => h - 24 - (h - 52) * v / maxCum;
+  ctx.strokeStyle = '#232d3a'; ctx.fillStyle = '#8b98a9'; ctx.font = '10px sans-serif';
+  for (let g = 0; g <= 4; g++) {
+    const y = 8 + (h - 52) * g / 4;
+    ctx.beginPath(); ctx.moveTo(8, y); ctx.lineTo(w - 8, y); ctx.stroke();
+    ctx.fillText(fmtSize(maxRate * (1 - g / 4)) + '/s', 10, y - 2);
+    ctx.textAlign = 'right';
+    ctx.fillText(fmtSize(maxCum * (1 - g / 4)), w - 10, y - 2);
+    ctx.textAlign = 'left';
+  }
+  const line = (arr, py, color, dashed) => {
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+    ctx.setLineDash(dashed ? [5, 4] : []);
+    arr.forEach((v, i) => i ? ctx.lineTo(px(i), py(v)) : ctx.moveTo(px(i), py(v)));
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  line(up, pyR, '#3fb950'); line(down, pyR, '#2f81f7');
+  line(cumUp, pyC, '#2ea043', true); line(cumDown, pyC, '#1f6feb', true);
+  const stepL = Math.ceil(labels.length / 10);
+  ctx.fillStyle = '#8b98a9';
+  labels.forEach((l, i) => { if (i % stepL === 0) ctx.fillText(l, px(i) - 10, h - 8); });
+  $('traffic-legend').innerHTML =
+    `<span><span class="dot" style="background:#3fb950"></span>上传速率</span>` +
+    `<span><span class="dot" style="background:#2f81f7"></span>下载速率</span>` +
+    `<span><span class="dash" style="border-color:#2ea043"></span>累计上传</span>` +
+    `<span><span class="dash" style="border-color:#1f6feb"></span>累计下载</span>` +
+    `<span class="chart-total">↑ ${fmtSize(su)} ↓ ${fmtSize(sd)}</span>`;
+}
 function fmtDate(iso) {
   if (!iso) return '-';
   const d = new Date(iso); if (isNaN(d)) return iso;
@@ -1177,16 +1282,57 @@ async function loadDashboard() {
       `</tbody></table>`
     : '<p class="muted">暂无即将到期的节点</p>';
   const t = await api('/api/admin/stats/traffic?hours=24');
-  if (t.status === 200 && t.data.labels) drawChart($('traffic-chart'), t.data.labels, t.data.up, t.data.down);
+  if (t.status === 200 && t.data.labels) drawTrafficChart(t.data);
   const r = await api('/api/admin/stats/rank?hours=24');
-  if (r.status === 200) {
-    const rows = [...r.data].sort((a,b) => b.total - a.total).slice(0, 8);
-    $('dash-rank').innerHTML = rows.length
-      ? `<table><thead><tr><th>节点</th><th>上行</th><th>下行</th><th>合计</th><th>平均 CPU</th></tr></thead><tbody>` +
-        rows.map(x => `<tr><td>${esc(x.name)} ${x.online?'':'<span class="badge off">离线</span>'}</td>
-          <td>${fmtSize(x.up)}</td><td>${fmtSize(x.down)}</td><td>${fmtSize(x.total)}</td><td>${x.avg_cpu}%</td></tr>`).join('') +
-        `</tbody></table>`
-      : '<p class="muted">暂无数据</p>';
+  if (r.status === 200 && Array.isArray(r.data)) {
+    const d = r.data;
+    // 平均 CPU 占用排行
+    const cpuRows = [...d].sort((a,b) => b.avg_cpu - a.avg_cpu).slice(0, 5);
+    const cpuMax = Math.max(1, ...cpuRows.map(x => x.avg_cpu));
+    $('dash-cpu-rank').innerHTML = cpuRows.length ? cpuRows.map((x,i) => `
+      <div class="rank-item">
+        <div class="rank-top"><span class="rank-name">${i+1}. ${esc(x.name)}</span><span class="rank-val">${x.avg_cpu}%</span></div>
+        <div class="rank-sub">峰值 ${x.peak_cpu}% at ${fmtPeakTime(x.peak_cpu_at)}</div>
+        <div class="rank-bar"><div class="rank-fill" style="width:${(x.avg_cpu/cpuMax*100).toFixed(1)}%;background:#8b5cf6"></div></div>
+      </div>`).join('') : '<p class="muted">暂无数据</p>';
+    // 平均内存占用排行
+    const memRows = [...d].sort((a,b) => b.avg_mem - a.avg_mem).slice(0, 5);
+    const memMax = Math.max(1, ...memRows.map(x => x.avg_mem));
+    $('dash-mem-rank').innerHTML = memRows.length ? memRows.map((x,i) => `
+      <div class="rank-item">
+        <div class="rank-top"><span class="rank-name">${i+1}. ${esc(x.name)}</span><span class="rank-val">${x.avg_mem}%</span></div>
+        <div class="rank-sub">峰值 ${x.peak_mem}% at ${fmtPeakTime(x.peak_mem_at)}</div>
+        <div class="rank-bar"><div class="rank-fill" style="width:${(x.avg_mem/memMax*100).toFixed(1)}%;background:#8b5cf6"></div></div>
+      </div>`).join('') : '<p class="muted">暂无数据</p>';
+    // 流量消耗 Top 5
+    const tRows = [...d].sort((a,b) => b.total - a.total).slice(0, 5);
+    const tMax = Math.max(1, ...tRows.map(x => x.total));
+    $('dash-traffic-top').innerHTML = tRows.length ? tRows.map((x,i) => {
+      const pk = x.peak_up >= x.peak_down
+        ? `峰值 ${fmtSize(x.peak_up)}/s at ${fmtPeakTime(x.peak_up_at)}`
+        : `峰值 ${fmtSize(x.peak_down)}/s at ${fmtPeakTime(x.peak_down_at)}`;
+      return `
+      <div class="rank-item">
+        <div class="rank-top"><span class="rank-name">${i+1}. ${esc(x.name)}</span><span class="rank-val chart-total">↑ ${fmtSize(x.up)} ↓ ${fmtSize(x.down)}</span></div>
+        <div class="rank-sub">${pk}</div>
+        <div class="rank-bar"><div class="rank-fill" style="width:${(x.total/tMax*100).toFixed(1)}%;background:#6366f1"></div></div>
+      </div>`; }).join('') : '<p class="muted">暂无数据</p>';
+  }
+  // 延迟排行
+  const pr = await api('/api/admin/stats/ping-rank?hours=24');
+  if (pr.status === 200 && Array.isArray(pr.data)) {
+    const rows = pr.data.filter(x => x.n > 0);
+    const label = x => `${esc(x.name)} · ${esc(x.task)}`;
+    const stable = [...rows].sort((a,b) => a.jitter - b.jitter).slice(0, 3);
+    const unstable = [...rows].sort((a,b) => b.jitter - a.jitter).slice(0, 3);
+    const loss = [...rows].sort((a,b) => b.loss - a.loss).slice(0, 3);
+    const latColor = v => v < 0.5 ? 'var(--ok)' : v < 1.5 ? 'var(--warn)' : 'var(--danger)';
+    $('dash-lat-stable').innerHTML = stable.length ? stable.map((x,i) =>
+      `<div class="lat-row"><span class="lat-name">${i+1}. ${label(x)}</span><span class="lat-val">${x.avg_lat} ms · <span style="color:${latColor(x.jitter)}">波动 ${x.jitter}</span></span></div>`).join('') : '<p class="muted">暂无数据</p>';
+    $('dash-lat-unstable').innerHTML = unstable.length ? unstable.map((x,i) =>
+      `<div class="lat-row"><span class="lat-name">${i+1}. ${label(x)}</span><span class="lat-val">${x.avg_lat} ms · <span style="color:${latColor(x.jitter)}">波动 ${x.jitter}</span></span></div>`).join('') : '<p class="muted">暂无数据</p>';
+    $('dash-lat-loss').innerHTML = loss.length ? loss.map((x,i) =>
+      `<div class="lat-row"><span class="lat-name">${i+1}. ${label(x)}</span><span class="lat-val" style="color:${x.loss > 5 ? 'var(--danger)' : 'inherit'}">${x.loss}%</span></div>`).join('') : '<p class="muted">暂无数据</p>';
   }
 }
 LOADERS.dashboard = loadDashboard;

@@ -2537,6 +2537,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             "labels": [r["time"][11:16] if len(r["time"]) > 16 else r["time"] for r in rows],
             "up": [r["up"] for r in rows],
             "down": [r["down"] for r in rows],
+            "bucket_sec": bucket_sec,
         })
 
     @app.route("/api/admin/stats/rank")
@@ -2553,12 +2554,43 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         for c in store.list_clients():
             t = store.sum_traffic(c["uuid"], start, end_s)
             m = store.avg_metrics(c["uuid"], start)
+            p = store.peak_metrics(c["uuid"], start)
             out.append({
                 "uuid": c["uuid"],
                 "name": c.get("name") or c["uuid"][:8],
                 "up": t["up"], "down": t["down"], "total": t["up"] + t["down"],
                 "avg_cpu": m["cpu"], "avg_mem": m["mem"],
                 "online": _is_online(c),
+                "peak_cpu": p["peak_cpu"], "peak_cpu_at": p["peak_cpu_at"],
+                "peak_mem": p["peak_mem"], "peak_mem_at": p["peak_mem_at"],
+                "peak_up": p["peak_up"], "peak_up_at": p["peak_up_at"],
+                "peak_down": p["peak_down"], "peak_down_at": p["peak_down_at"],
+            })
+        return jsonify(out)
+
+    @app.route("/api/admin/stats/ping-rank")
+    @_require_perm("dashboard")
+    def admin_stats_ping_rank():
+        """延迟排行：每 (任务, 节点) 的平均延迟/抖动/丢包率（近24h）。"""
+        try:
+            hours = max(1, min(168, int(request.args.get("hours", 24))))
+        except Exception:
+            hours = 24
+        end = datetime.now(timezone.utc)
+        start = _iso(end - timedelta(hours=hours))
+        tasks = {t["id"]: t.get("name") or t.get("target", "")
+                 for t in store.list_ping_tasks()}
+        clients = {c["uuid"]: (c.get("name") or c["uuid"][:8])
+                   for c in store.list_clients()}
+        out = []
+        for s in store.ping_rank_stats(start):
+            out.append({
+                "task_id": s["task_id"],
+                "task": tasks.get(s["task_id"], str(s["task_id"])),
+                "client_uuid": s["client_uuid"],
+                "name": clients.get(s["client_uuid"], s["client_uuid"][:8]),
+                "avg_lat": s["avg_lat"], "jitter": s["jitter"],
+                "loss": s["loss"], "n": s["n"],
             })
         return jsonify(out)
 
