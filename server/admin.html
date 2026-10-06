@@ -55,6 +55,19 @@
   .stat .num { font-size:26px; font-weight:700; }
   .stat .lbl { color:var(--muted); font-size:12px; margin-top:4px; }
   .num.ok { color:var(--ok); } .num.bad { color:var(--danger); } .num.warn { color:var(--warn); }
+  .ring-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; margin-bottom:16px; }
+  .ring-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; display:flex; align-items:center; gap:18px; }
+  .ring-wrap { position:relative; width:110px; height:110px; flex:none; }
+  .ring-wrap svg { width:110px; height:110px; transform:rotate(-90deg); }
+  .ring-bg { fill:none; stroke:var(--border); stroke-width:11; }
+  .ring-fg { fill:none; stroke-width:11; stroke-linecap:round; transition:stroke-dashoffset .6s ease; }
+  .ring-pct { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; }
+  .ring-info { min-width:0; }
+  .ring-title { font-size:15px; font-weight:700; margin-bottom:6px; }
+  .ring-lbl { color:var(--muted); font-size:12px; margin-bottom:4px; }
+  .ring-line { font-size:13px; margin-top:2px; }
+  .ring-line b { font-size:15px; }
+  .ring-line.bad { color:var(--danger); } .ring-line.warn { color:var(--warn); }
   label { display:block; margin:12px 0 4px; color:var(--muted); font-size:13px; }
   input[type=text], input[type=password], input[type=number], select, textarea {
     width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--border);
@@ -205,6 +218,7 @@
   </aside>
   <main>
     <section id="page-dashboard" class="page">
+      <div class="ring-grid" id="dash-rings"></div>
       <div class="grid" id="dash-stats"></div>
       <div class="card">
         <h2>全网流量 <span class="muted">（近 24 小时，KB/s）</span></h2>
@@ -1111,11 +1125,42 @@ function drawChart(canvas, labels, up, down) {
 async function loadDashboard() {
   const {status, data} = await api('/api/admin/dashboard');
   if (status === 401) return needLogin();
+  // 圆环：在在线离率 / 到期健康度
+  const total = data.total || 0, online = data.online || 0, offline = data.offline || 0;
+  const onPct = total ? Math.round(online / total * 100) : 0;
+  const onColor = onPct === 100 ? 'var(--ok)' : onPct >= 50 ? 'var(--warn)' : 'var(--danger)';
+  const onTitle = onPct === 100 ? '全部服务器在线 🎉' : onPct >= 50 ? '部分服务器在线，请注意检查' : '多数服务器离线，请立即检查';
+  const CIRC = 2 * Math.PI * 52;
+  const ring = (pct, color, title, lbl, lines) => `
+    <div class="card ring-card">
+      <div class="ring-wrap">
+        <svg viewBox="0 0 120 120">
+          <circle class="ring-bg" cx="60" cy="60" r="52"/>
+          <circle class="ring-fg" cx="60" cy="60" r="52" stroke="${color}"
+            stroke-dasharray="${CIRC}" stroke-dashoffset="${CIRC * (1 - pct / 100)}"/>
+        </svg>
+        <div class="ring-pct">${pct}%</div>
+      </div>
+      <div class="ring-info">
+        <div class="ring-title">${title}</div>
+        <div class="ring-lbl">${lbl}</div>
+        ${lines}
+      </div>
+    </div>`;
+  const expiring = (data.expiry_soon || []).length;
+  const healthy = total - expiring;
+  const exPct = total ? Math.round(healthy / total * 100) : 100;
+  const exColor = expiring === 0 ? 'var(--ok)' : expiring <= 2 ? 'var(--warn)' : 'var(--danger)';
+  const exTitle = expiring === 0 ? '所有服务器到期状态正常 🎉' : `${expiring} 台服务器 30 天内到期`;
+  $('dash-rings').innerHTML =
+    ring(onPct, onColor, onTitle, '在线总览',
+      `<div class="ring-line">在线 <b>${online}/${total}</b> 台</div>` +
+      (offline ? `<div class="ring-line bad">离线 <b>${offline}</b> 台</div>` : '')) +
+    ring(exPct, exColor, exTitle, '到期总览',
+      `<div class="ring-line">正常 <b>${healthy}/${total}</b> 台</div>` +
+      (expiring ? `<div class="ring-line warn">30天内到期 <b>${expiring}</b> 台</div>` : ''));
   $('dash-stats').innerHTML = `
     <div class="stat"><div class="num">${data.total}</div><div class="lbl">节点总数</div></div>
-    <div class="stat"><div class="num ok">${data.online}</div><div class="lbl">在线</div></div>
-    <div class="stat"><div class="num ${data.offline ? 'bad' : ''}">${data.offline}</div><div class="lbl">离线</div></div>
-    <div class="stat"><div class="num ${data.expiry_soon && data.expiry_soon.length ? 'warn' : ''}">${(data.expiry_soon||[]).length}</div><div class="lbl">30天内到期</div></div>
     <div class="stat"><div class="num">${fmtSize(data.db_size)}</div><div class="lbl">数据库占用</div></div>
     <div class="stat"><div class="num">${data.records}</div><div class="lbl">监控记录数</div></div>
     <div class="stat"><div class="num">${data.reports_today}</div><div class="lbl">今日上报次数</div></div>`;
