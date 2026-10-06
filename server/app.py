@@ -2594,6 +2594,32 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             })
         return jsonify(out)
 
+    @app.route("/api/admin/dashboard_order", methods=["GET"])
+    @_require_perm("dashboard")
+    def admin_dashboard_order():
+        """仪表板卡片排序（仅视觉顺序）。"""
+        try:
+            order = json.loads(store.get_setting("admin_dashboard_order", "[]"))
+        except Exception:
+            order = []
+        if not isinstance(order, list):
+            order = []
+        return jsonify({"order": [str(x) for x in order if str(x).strip()]})
+
+    @app.route("/api/admin/dashboard_order", methods=["POST"])
+    @_require_perm("dashboard")
+    def admin_dashboard_order_save():
+        data = request.get_json(force=True, silent=True) or {}
+        order = data.get("order") or []
+        order = [str(x) for x in order if str(x).strip()]
+        seen, clean = set(), []
+        for x in order:
+            if x not in seen:
+                seen.add(x)
+                clean.append(x)
+        store.set_setting("admin_dashboard_order", json.dumps(clean))
+        return jsonify({"ok": True})
+
     @app.route("/api/admin/stats/ping")
     @_require_perm("dashboard")
     def admin_stats_ping():

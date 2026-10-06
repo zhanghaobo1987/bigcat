@@ -70,6 +70,17 @@
   .ring-line.bad { color:var(--danger); } .ring-line.warn { color:var(--warn); }
   .dash-2col { display:grid; grid-template-columns:1.6fr 1fr; gap:12px; margin-bottom:16px; }
   @media (max-width:1100px){ .dash-2col { grid-template-columns:1fr; } }
+  .dash-toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  #dash-widgets { display:grid; grid-template-columns:repeat(12,1fr); gap:12px; }
+  #dash-widgets > [data-widget] { min-width:0; }
+  #dash-widgets .w-full { grid-column:span 12; }
+  #dash-widgets .w-wide { grid-column:span 7; }
+  #dash-widgets .w-side { grid-column:span 5; }
+  #dash-widgets .w-half { grid-column:span 6; }
+  @media (max-width:1100px){ #dash-widgets .w-wide, #dash-widgets .w-side, #dash-widgets .w-half { grid-column:span 12; } }
+  #dash-widgets [data-widget] { cursor:grab; }
+  #dash-widgets [data-widget].dragging { opacity:.4; }
+  #dash-widgets [data-widget].drag-over { outline:2px dashed var(--warn); outline-offset:-2px; border-radius:12px; }
   .card-hd { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
   .card-hd h2 { margin:0; display:flex; align-items:center; gap:8px; }
   .card-hd .hd-ico { color:var(--muted); font-size:14px; }
@@ -244,46 +255,48 @@
   </aside>
   <main>
     <section id="page-dashboard" class="page">
-      <div class="ring-grid" id="dash-rings"></div>
-      <div class="grid" id="dash-stats"></div>
-      <div class="dash-2col">
-        <div class="card">
+      <div class="dash-toolbar">
+        <span class="muted">💡 按住卡片可拖动调整位置，松开自动保存</span>
+        <button class="ghost small" id="btn-dash-reset">↺ 恢复默认排版</button>
+      </div>
+      <div id="dash-widgets">
+        <div data-widget="rings" class="w-full"><div class="ring-grid" id="dash-rings"></div></div>
+        <div data-widget="stats" class="w-full"><div class="grid" id="dash-stats" style="margin-bottom:0"></div></div>
+        <div data-widget="traffic" class="card w-wide">
           <div class="card-hd">
             <h2>最近24小时流量</h2>
             <div class="chart-legend" id="traffic-legend"></div>
           </div>
           <canvas class="chart" id="traffic-chart"></canvas>
         </div>
-        <div class="card">
+        <div data-widget="cpu" class="card w-side">
           <div class="card-hd"><h2><span class="hd-ico">◔</span>平均 CPU 占用排行</h2><span class="hd-menu">☰</span></div>
           <div id="dash-cpu-rank"><p class="muted">加载中…</p></div>
         </div>
-      </div>
-      <div class="dash-2col">
-        <div class="card">
+        <div data-widget="traffictop" class="card w-wide">
           <div class="card-hd"><h2>流量消耗 Top 5</h2><span class="hd-menu">☰</span></div>
           <div id="dash-traffic-top"><p class="muted">加载中…</p></div>
         </div>
-        <div class="card">
+        <div data-widget="mem" class="card w-side">
           <div class="card-hd"><h2><span class="hd-ico">▤</span>平均内存占用百分比排行</h2><span class="hd-menu">☰</span></div>
           <div id="dash-mem-rank"><p class="muted">加载中…</p></div>
         </div>
-      </div>
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-hd"><h2><span class="hd-ico">◌</span>延迟</h2></div>
-        <div class="lat3">
-          <div class="lat-col"><h3>延迟最稳定 <span class="hd-menu">☰</span></h3><div id="dash-lat-stable"><p class="muted">加载中…</p></div></div>
-          <div class="lat-col"><h3>延迟最不稳定 <span class="hd-menu">☰</span></h3><div id="dash-lat-unstable"><p class="muted">加载中…</p></div></div>
-          <div class="lat-col"><h3>丢包最高 <span class="hd-menu">☰</span></h3><div id="dash-lat-loss"><p class="muted">加载中…</p></div></div>
+        <div data-widget="latency" class="card w-full">
+          <div class="card-hd"><h2><span class="hd-ico">◌</span>延迟</h2></div>
+          <div class="lat3">
+            <div class="lat-col"><h3>延迟最稳定 <span class="hd-menu">☰</span></h3><div id="dash-lat-stable"><p class="muted">加载中…</p></div></div>
+            <div class="lat-col"><h3>延迟最不稳定 <span class="hd-menu">☰</span></h3><div id="dash-lat-unstable"><p class="muted">加载中…</p></div></div>
+            <div class="lat-col"><h3>丢包最高 <span class="hd-menu">☰</span></h3><div id="dash-lat-loss"><p class="muted">加载中…</p></div></div>
+          </div>
         </div>
-      </div>
-      <div class="card">
-        <h2>离线节点 <span class="muted" id="dash-th"></span></h2>
-        <div id="dash-offline"><p class="muted">加载中…</p></div>
-      </div>
-      <div class="card">
-        <h2>即将到期 <span class="muted">（30 天内）</span></h2>
-        <div id="dash-expiry"><p class="muted">加载中…</p></div>
+        <div data-widget="offline" class="card w-half">
+          <h2>离线节点 <span class="muted" id="dash-th"></span></h2>
+          <div id="dash-offline"><p class="muted">加载中…</p></div>
+        </div>
+        <div data-widget="expiry" class="card w-half">
+          <h2>即将到期 <span class="muted">（30 天内）</span></h2>
+          <div id="dash-expiry"><p class="muted">加载中…</p></div>
+        </div>
       </div>
     </section>
 
@@ -1228,6 +1241,7 @@ function drawChart(canvas, labels, up, down) {
   ctx.fillStyle = '#2f81f7'; ctx.fillText('— 下行', w - 60, 16);
 }
 async function loadDashboard() {
+  initDashDrag();
   const {status, data} = await api('/api/admin/dashboard');
   if (status === 401) return needLogin();
   // 圆环：在在线离率 / 到期健康度
@@ -1336,6 +1350,67 @@ async function loadDashboard() {
   }
 }
 LOADERS.dashboard = loadDashboard;
+
+/* ---------------- 仪表板卡片拖拽排序 ---------------- */
+let dashDragEl = null;
+function dashWidgets() {
+  return [...document.querySelectorAll('#dash-widgets [data-widget]')];
+}
+function applyDashOrder(order) {
+  const wrap = $('dash-widgets');
+  if (!wrap || !Array.isArray(order) || !order.length) return;
+  const map = {};
+  dashWidgets().forEach(el => map[el.dataset.widget] = el);
+  order.forEach(id => { if (map[id]) { wrap.appendChild(map[id]); delete map[id]; } });
+  Object.values(map).forEach(el => wrap.appendChild(el)); // 新卡片放最后
+}
+function saveDashOrder() {
+  const order = dashWidgets().map(el => el.dataset.widget);
+  api('/api/admin/dashboard_order', 'POST', {order});
+}
+function initDashDrag() {
+  const wrap = $('dash-widgets');
+  if (!wrap || wrap.__dragInit) return;
+  wrap.__dragInit = true;
+  dashWidgets().forEach(el => {
+    el.setAttribute('draggable', 'true');
+    el.addEventListener('dragstart', e => {
+      dashDragEl = el;
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', el.dataset.widget); } catch(_) {}
+      requestAnimationFrame(() => el.classList.add('dragging'));
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      dashDragEl = null;
+      dashWidgets().forEach(x => x.classList.remove('drag-over'));
+    });
+    el.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (!dashDragEl || dashDragEl === el) return;
+      el.classList.add('drag-over');
+      const r = el.getBoundingClientRect();
+      const after = (e.clientY - r.top) > r.height / 2;
+      if (after) el.after(dashDragEl); else el.before(dashDragEl);
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      saveDashOrder();
+    });
+  });
+  // 读取已保存的排序
+  api('/api/admin/dashboard_order').then(({status, data}) => {
+    if (status === 200 && data && Array.isArray(data.order)) applyDashOrder(data.order);
+  });
+}
+$('btn-dash-reset').onclick = async () => {
+  if (!confirm('恢复仪表板默认排版？当前自定义顺序将被清除。')) return;
+  await api('/api/admin/dashboard_order', 'POST', {order: []});
+  location.reload();
+};
 
 /* ---------------- 服务器 ---------------- */
 let nodesCache = [];
