@@ -1186,6 +1186,31 @@ class Storage:
             })
         return out
 
+    def query_ping_records(self, since_iso: str, until_iso: str,
+                           client_uuid: str = "", task_id: int = -1,
+                           limit: int = 4000):
+        """查询 ping 结果，供 Komari common:getRecords(type=ping)。
+
+        返回 [(client_uuid, task_id, time, value)]，value>=0 为延迟 ms，
+        value=-1 表示探测失败（丢包）。
+        """
+        q = ("SELECT client_uuid, task_id, time, latency_ms, ok "
+             "FROM ping_results WHERE time >= ? AND time <= ? "
+             "AND client_uuid != ''")
+        args = [since_iso, until_iso]
+        if client_uuid:
+            q += " AND client_uuid = ?"
+            args.append(client_uuid)
+        if task_id and task_id != -1:
+            q += " AND task_id = ?"
+            args.append(task_id)
+        q += " ORDER BY time DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(q, args).fetchall()
+        return [(r["client_uuid"], r["task_id"], r["time"],
+                 int(r["latency_ms"]) if r["ok"] else -1) for r in rows]
+
     def node_ping_stats(self, since_iso: str):
         """各节点最近 ping 统计，供 Komari 主题状态接口。
 

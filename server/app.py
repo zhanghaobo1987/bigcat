@@ -1059,6 +1059,50 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         )
         return [_report_from_record(client_uuid, r) for r in rows]
 
+    def rpc_common_get_records(params):
+        """common:getRecords — Komari 兼容。
+
+        type=ping 时返回 {count, records: [{task_id,time,value,client}],
+        tasks: [{id,name}], from, to}（value>=0 为延迟 ms，-1 为丢包）；
+        type=load 或带 uuid 时走原有按节点查负载记录逻辑。
+        """
+        params = params or {}
+        rtype = (params.get("type") or "").strip().lower()
+        if rtype == "ping":
+            hours = params.get("hours") or 1
+            try:
+                hours = max(1, int(hours))
+            except (ValueError, TypeError):
+                hours = 1
+            uuid = params.get("uuid") or ""
+            task_id = params.get("task_id", -1)
+            try:
+                task_id = int(task_id)
+            except (ValueError, TypeError):
+                task_id = -1
+            max_count = params.get("maxCount", 4000)
+            try:
+                max_count = int(max_count)
+            except (ValueError, TypeError):
+                max_count = 4000
+            if max_count <= 0:
+                max_count = 4000
+            now = datetime.now(timezone.utc)
+            since = _iso(now - timedelta(hours=hours))
+            until = _iso(now)
+            hidden_uuids = {c["uuid"] for c in store.list_clients()
+                            if c.get("hidden")}
+            rows = store.query_ping_records(since, until, uuid, task_id,
+                                            limit=max_count)
+            records = [{"task_id": tid, "time": t, "value": v, "client": cu}
+                       for cu, tid, t, v in rows if cu not in hidden_uuids]
+            tasks = [{"id": t["id"], "name": t["name"]}
+                     for t in store.list_ping_tasks() if t.get("enabled")]
+            return {"count": len(records), "records": records,
+                    "tasks": tasks, "from": since, "to": until}
+        # load 类型：沿用原有逻辑（uuid 必填）
+        return rpc_get_records_by_uuid(params)
+
     def rpc_get_records_by_uuid(params):
         params = params or {}
         client_uuid = params.get("uuid", "")
@@ -1516,7 +1560,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         "common:getNodeRecentStatus": rpc_get_client_recent_records,
         "common:getPublicInfo": rpc_get_public_settings,
         "common:getBackendVersion": rpc_get_version,
-        "common:getRecords": rpc_get_records_by_uuid,
+        "common:getRecords": rpc_common_get_records,
         # legacy aliases
         "getNodesInformation": rpc_get_nodes_information,
         "getNodesLatestStatus": rpc_get_nodes_latest_status,
