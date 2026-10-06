@@ -1400,6 +1400,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             out[c["uuid"]] = rec
         return out
 
+    def rpc_ping(params):
+        return "pong"
+
     RPC_METHODS = {
         "public:getNodesInformation": rpc_get_nodes_information,
         "public:getPublicSettings": rpc_get_public_settings,
@@ -1413,6 +1416,14 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         "public:getPingMetricStats": rpc_get_ping_metric_stats,
         "public:getPingRecords": rpc_get_ping_records,
         "common:getNodesLatestStatus": rpc_get_nodes_latest_status,
+        # Komari Emerald 等第三方主题使用的命名
+        "rpc.ping": rpc_ping,
+        "rpc.getVersion": rpc_get_version,
+        "common:getNodes": rpc_get_nodes_information,
+        "common:getNodeRecentStatus": rpc_get_client_recent_records,
+        "common:getPublicInfo": rpc_get_public_settings,
+        "common:getBackendVersion": rpc_get_version,
+        "common:getRecords": rpc_get_records_by_uuid,
         # legacy aliases
         "getNodesInformation": rpc_get_nodes_information,
         "getNodesLatestStatus": rpc_get_nodes_latest_status,
