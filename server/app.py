@@ -1057,8 +1057,41 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             _iso(datetime.now(timezone.utc)),
             limit=600,
         )
-        # Komari 格式：{count, records: [...]}（第三方主题按此消费）
-        records = [_report_from_record(client_uuid, r) for r in rows]
+        # Komari 扁平格式 {count, records}（第三方主题按此消费；
+        # LuminaPlus 未使用本接口，可安全改为扁平）。
+        records = []
+        for r in rows:
+            try:
+                conns = int(r.get("connections", 0) or 0)
+            except (ValueError, TypeError):
+                # 兼容老数据里 connections 存 JSON 字符串的情况
+                try:
+                    conns = int(json.loads(r.get("connections") or "{}")
+                                .get("tcp", 0))
+                except Exception:
+                    conns = 0
+            records.append({
+                "client": client_uuid,
+                "time": r.get("time", ""),
+                "cpu": r.get("cpu", 0) or 0,
+                "gpu": r.get("gpu", 0) or 0,
+                "ram": r.get("ram", 0) or 0,
+                "ram_total": r.get("ram_total", 0) or 0,
+                "swap": r.get("swap", 0) or 0,
+                "swap_total": r.get("swap_total", 0) or 0,
+                "load": r.get("load", 0) or 0,
+                "temp": r.get("temp", 0) or 0,
+                "disk": r.get("disk", 0) or 0,
+                "disk_total": r.get("disk_total", 0) or 0,
+                "net_in": r.get("net_in", 0) or 0,
+                "net_out": r.get("net_out", 0) or 0,
+                "net_total_up": r.get("net_total_up", 0) or 0,
+                "net_total_down": r.get("net_total_down", 0) or 0,
+                "process": r.get("process", 0) or 0,
+                "connections": conns,
+                "connections_udp": r.get("connections_udp", 0) or 0,
+                "uptime": r.get("uptime", 0) or 0,
+            })
         return {"count": len(records), "records": records}
 
     def rpc_common_get_records(params):
