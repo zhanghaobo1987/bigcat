@@ -48,6 +48,20 @@
   .nav-foot-col { margin-top:10px; padding:0 8px; display:flex; flex-direction:column; gap:6px; }
   .nav-foot-col button { width:100%; }
   #btn-logout { margin-top:2px; }
+  /* 迁移页面 */
+  .form-grid { display:grid; gap:12px; margin:16px 0; }
+  .form-grid label { display:block; font-size:14px; }
+  .form-grid label .req { color:var(--danger, #e5484d); }
+  .form-grid input { display:block; width:100%; margin-top:6px; padding:9px 12px;
+    border:1px solid var(--border); border-radius:8px; background:var(--bg);
+    color:var(--text); font-size:14px; box-sizing:border-box; }
+  .btn-row { display:flex; gap:10px; margin-top:4px; }
+  .progress-wrap { height:8px; background:var(--border); border-radius:4px; overflow:hidden; margin:12px 0 8px; }
+  .progress-bar { height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }
+  .log-box { max-height:320px; overflow-y:auto; background:#0d1117; color:#c9d1d9;
+    border-radius:8px; padding:12px; font-family:monospace; font-size:12px; line-height:1.6; margin-top:8px; }
+  .log-box .lt-warn { color:#e3b341; } .log-box .lt-error { color:#f85149; } .log-box .lt-info { color:#c9d1d9; }
+  .log-box .lt-time { color:#6e7681; margin-right:8px; }
   .nav-arrow { cursor:pointer; padding:1px 7px; margin-right:2px; border-radius:5px;
     color:var(--muted); font-size:12px; border:1px solid transparent; }
   .nav-arrow:hover { background:var(--accent); color:#fff; }
@@ -689,6 +703,35 @@
       </div>
     </section>
 
+    <section id="page-migrate" class="page hidden">
+      <div class="card">
+        <h2>🚚 服务器迁移</h2>
+        <p class="muted">将本机 BigCat 的全部数据（数据库、主题、配置）一键迁移到新服务器。迁移过程：连接测试 → 目标机自动安装 BigCat → 打包本地数据 → 传输 → 目标机恢复并启动服务。</p>
+        <div class="form-grid" style="max-width:520px">
+          <label>新服务器 IP <span class="req">*</span>
+            <input id="mig-host" placeholder="例如 1.2.3.4">
+          </label>
+          <label>SSH 端口
+            <input id="mig-port" placeholder="留空默认 22" inputmode="numeric">
+          </label>
+          <label>SSH 密码（root） <span class="req">*</span>
+            <input id="mig-pass" type="password" placeholder="目标服务器 root 密码" autocomplete="new-password">
+          </label>
+        </div>
+        <div class="btn-row">
+          <button class="ghost" id="mig-test">测试连接</button>
+          <button class="primary" id="mig-start">一键迁移</button>
+        </div>
+        <div id="mig-status" class="hidden" style="margin-top:16px">
+          <div class="progress-wrap">
+            <div class="progress-bar" id="mig-bar" style="width:0%"></div>
+          </div>
+          <p id="mig-step" class="muted"></p>
+          <div id="mig-log" class="log-box"></div>
+        </div>
+      </div>
+    </section>
+
     <section id="page-about" class="page hidden">
       <div class="card">
         <h2>关于</h2>
@@ -1041,7 +1084,7 @@ const PAGES = [
   ['database', '💾', '数据库'],
   ['sessions', '👥', '会话管理'], ['account', '👤', '账户'],
   ['settings', '⚙️', '设置'], ['skin', '💅', '外观皮肤'],
-  ['logs', '📜', '系统日志'], ['about', 'ℹ️', '关于'],
+  ['logs', '📜', '系统日志'], ['migrate', '🚚', '迁移'], ['about', 'ℹ️', '关于'],
 ];
 let curPage = 'dashboard';
 let navEditMode = false;
@@ -2737,6 +2780,87 @@ async function loadAbout() {
   ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>${esc(String(v))}</span></div>`).join('');
 }
 LOADERS.about = loadAbout;
+
+/* ---------------- 服务器迁移 ---------------- */
+let migPollTimer = null;
+function migVals() {
+  return {
+    host: $('mig-host').value.trim(),
+    port: $('mig-port').value.trim() || '22',
+    password: $('mig-pass').value,
+  };
+}
+function migLogHtml(log) {
+  return log.map(e =>
+    `<div><span class="lt-time">${esc(e.time)}</span><span class="lt-${esc(e.level)}">${esc(e.msg)}</span></div>`
+  ).join('');
+}
+function renderMigStatus(s) {
+  $('mig-status').classList.remove('hidden');
+  $('mig-bar').style.width = (s.progress || 0) + '%';
+  $('mig-step').textContent = s.step || '';
+  $('mig-log').innerHTML = migLogHtml(s.log || []);
+  $('mig-log').scrollTop = $('mig-log').scrollHeight;
+  const busy = !!s.running;
+  $('mig-start').disabled = busy;
+  $('mig-test').disabled = busy;
+  if (s.done && !s.running && migPollTimer) {
+    clearInterval(migPollTimer); migPollTimer = null;
+  }
+}
+async function pollMigStatus() {
+  try {
+    const {data} = await api('/api/admin/migrate/status');
+    renderMigStatus(data);
+  } catch (e) { /* 忽略轮询错误 */ }
+}
+async function loadMigrate() {
+  // 进入页面时查一次状态（可能有进行中的任务）
+  await pollMigStatus();
+  if (migPollTimer) clearInterval(migPollTimer);
+  migPollTimer = setInterval(pollMigStatus, 2000);
+}
+$('mig-test').onclick = async () => {
+  const v = migVals();
+  if (!v.host) return toast('请输入新服务器 IP');
+  if (!v.password) return toast('请输入 SSH 密码');
+  $('mig-test').disabled = true;
+  try {
+    const {data} = await api('/api/admin/migrate/test', {
+      method: 'POST', body: JSON.stringify(v),
+    });
+    if (data.ok) {
+      toast('连接成功' + (data.has_bigcat ? '（目标机已安装 BigCat，将覆盖数据）' : ''));
+    } else {
+      toast('连接失败：' + data.message);
+    }
+  } catch (e) {
+    toast('请求失败：' + e.message);
+  } finally {
+    $('mig-test').disabled = false;
+  }
+};
+$('mig-start').onclick = async () => {
+  const v = migVals();
+  if (!v.host) return toast('请输入新服务器 IP');
+  if (!v.password) return toast('请输入 SSH 密码');
+  if (!confirm(`确认将本机全部数据迁移到 ${v.host}:${v.port} 吗？\n\n目标机上的 BigCat 数据将被覆盖！`)) return;
+  if (!confirm('再次确认：迁移后请将域名/探针指向新服务器，本机服务仍需手动停止。开始迁移？')) return;
+  try {
+    const {data} = await api('/api/admin/migrate/start', {
+      method: 'POST', body: JSON.stringify(v),
+    });
+    if (!data.ok) return toast(data.message);
+    toast('迁移已启动');
+    $('mig-pass').value = ''; // 启动后清空密码框
+    if (migPollTimer) clearInterval(migPollTimer);
+    migPollTimer = setInterval(pollMigStatus, 2000);
+    pollMigStatus();
+  } catch (e) {
+    toast('启动失败：' + e.message);
+  }
+};
+LOADERS.migrate = loadMigrate;
 </script>
 </body>
 </html>
