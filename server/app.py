@@ -1376,10 +1376,11 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         )
 
     def rpc_get_nodes_latest_status(params):
-        """common:getNodesLatestStatus — 主题实时状态轮询用：返回各节点最新一条上报记录。
+        """common:getNodesLatestStatus — Komari 兼容扁平格式。
 
-        返回 {uuid: record}，record 为嵌套格式并附带 online 布尔值；
-        主题据此刷新节点卡片实时数据，失败时会显示“实时状态同步异常”警告。
+        返回 {uuid: record}，record 为 Komari recordLike 扁平结构
+        （cpu/ram/net_in 等为数字，而非嵌套对象），第三方 Komari 主题
+        （如 Emerald）直接消费；BigCat 自带主题做过 Object.values 兼容。
         """
         params = params or {}
         uuids = params.get("uuids") or []
@@ -1395,9 +1396,31 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             r = store.latest_record(c["uuid"])
             if not r:
                 continue
-            rec = _report_from_record(c["uuid"], r)
-            rec["online"] = _is_online(c)
-            out[c["uuid"]] = rec
+            # Komari 扁平格式
+            out[c["uuid"]] = {
+                "client": c["uuid"],
+                "time": r.get("time", ""),
+                "cpu": r.get("cpu", 0) or 0,
+                "gpu": r.get("gpu", 0) or 0,
+                "ram": r.get("ram", 0) or 0,
+                "ram_total": r.get("ram_total", 0) or 0,
+                "swap": r.get("swap", 0) or 0,
+                "swap_total": r.get("swap_total", 0) or 0,
+                "load": r.get("load", 0) or 0,
+                "load5": r.get("load", 0) or 0,
+                "load15": r.get("load", 0) or 0,
+                "disk": r.get("disk", 0) or 0,
+                "disk_total": r.get("disk_total", 0) or 0,
+                "net_in": r.get("net_in", 0) or 0,
+                "net_out": r.get("net_out", 0) or 0,
+                "net_total_up": r.get("net_total_up", 0) or 0,
+                "net_total_down": r.get("net_total_down", 0) or 0,
+                "process": r.get("process", 0) or 0,
+                "connections": r.get("connections", 0) or 0,
+                "connections_udp": r.get("connections_udp", 0) or 0,
+                "uptime": r.get("uptime", 0) or 0,
+                "online": bool(_is_online(c)),
+            }
         return out
 
     def rpc_ping(params):
