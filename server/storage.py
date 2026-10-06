@@ -1186,6 +1186,57 @@ class Storage:
             })
         return out
 
+    def node_ping_stats(self, since_iso: str):
+        """各节点最近 ping 统计，供 Komari 主题状态接口。
+
+        返回 {client_uuid: {task_name: {name, latest, avg, min, max, loss}}}。
+        """
+        with self._lock:
+            tasks = {r["id"]: r["name"] for r in self._conn.execute(
+                "SELECT id, name FROM ping_tasks WHERE enabled=1").fetchall()}
+            if not tasks:
+                return {}
+            rows = self._conn.execute(
+                """SELECT client_uuid, task_id,
+                          AVG(CASE WHEN ok=1 THEN latency_ms END) AS avg_lat,
+                          MIN(CASE WHEN ok=1 THEN latency_ms END) AS min_lat,
+                          MAX(CASE WHEN ok=1 THEN latency_ms END) AS max_lat,
+                          SUM(ok) AS ok_n, COUNT(*) AS n
+                   FROM ping_results
+                   WHERE time >= ? AND client_uuid != ''
+                   GROUP BY client_uuid, task_id""",
+                (since_iso,)).fetchall()
+            # 取各 (节点,任务) 最新一条延迟
+            latest = {}
+            for r in self._conn.execute(
+                """SELECT client_uuid, task_id, latency_ms, ok
+                   FROM ping_results
+                   WHERE time >= ? AND client_uuid != ''
+                   ORDER BY time DESC""",
+                (since_iso,)).fetchall():
+                key = (r["client_uuid"], r["task_id"])
+                if key not in latest:
+                    latest[key] = r
+        out = {}
+        for r in rows:
+            uuid, tid = r["client_uuid"], r["task_id"]
+            if tid not in tasks:
+                continue
+            n = r["n"] or 0
+            name = tasks[tid]
+            lt = latest.get((uuid, tid))
+            stat = {
+                "name": name,
+                "latest": int(lt["latency_ms"]) if lt and lt["ok"] else 0,
+                "avg": int(r["avg_lat"] or 0),
+                "min": int(r["min_lat"] or 0),
+                "max": int(r["max_lat"] or 0),
+                "loss": round((1 - (r["ok_n"] or 0) / n) * 100, 1) if n else 0,
+                "tail": 0,
+            }
+            out.setdefault(uuid, {})[name] = stat
+        return out
+
     def traffic_series(self, since_iso: str, until_iso: str, bucket_sec: int = 900):
         """Aggregate up/down rates into time buckets across all clients."""
         with self._lock:

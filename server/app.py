@@ -474,6 +474,15 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             patched = _patched_index_js(p)
             if patched is not None:
                 return Response(patched, mimetype="application/javascript")
+        # 第三方主题（如 Komari Emerald）包内缺 logo 等静态资源时，
+        # 回退到 BigCat 自带静态目录查找，避免图标裂图。
+        # 候选位置：主题 dist/assets → 自带 static/assets → 自带 static/images
+        for base in (_active_theme_dist() + "/assets",
+                     app.config["static_dir"] + "/assets",
+                     app.config["static_dir"] + "/images"):
+            full = os.path.join(base, p)
+            if os.path.isfile(full):
+                return send_from_directory(base, p)
         return send_from_directory(_active_theme_dist() + "/assets", p)
 
     @app.route("/images/<path:p>")
@@ -1381,6 +1390,7 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         返回 {uuid: record}，record 为 Komari recordLike 扁平结构
         （cpu/ram/net_in 等为数字，而非嵌套对象），第三方 Komari 主题
         （如 Emerald）直接消费；BigCat 自带主题做过 Object.values 兼容。
+        另附 ping 字段（各任务延迟统计，供主题三网延迟展示）。
         """
         params = params or {}
         uuids = params.get("uuids") or []
@@ -1389,6 +1399,12 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             clients = [c for c in clients if c]
         else:
             clients = store.list_clients()
+        # ping 统计（最近 1 小时）
+        try:
+            ping_map = store.node_ping_stats(
+                _iso(datetime.now(timezone.utc) - timedelta(hours=1)))
+        except Exception:
+            ping_map = {}
         out = {}
         for c in clients:
             if c.get("hidden"):
@@ -1420,17 +1436,48 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
                 "connections_udp": r.get("connections_udp", 0) or 0,
                 "uptime": r.get("uptime", 0) or 0,
                 "online": bool(_is_online(c)),
+                "ping": ping_map.get(c["uuid"], {}),
             }
         return out
 
     def rpc_ping(params):
         return "pong"
 
+    def _komari_billing_days(v) -> int:
+        """BigCat 计费周期字符串 → Komari 天数（int）。"""
+        s = str(v or "").strip().lower()
+        mapping = {
+            "monthly": 30, "month": 30,
+            "quarterly": 90, "quarter": 90,
+            "semiannually": 180, "half-year": 180,
+            "yearly": 365, "annually": 365, "annual": 365, "year": 365,
+            "biennially": 730,
+            "long-term": 36500, "lifetime": 36500,  # 长期/买断按 100 年计
+        }
+        if s in mapping:
+            return mapping[s]
+        try:
+            return max(0, int(float(s)))
+        except (ValueError, TypeError):
+            return 0
+
+    def _komari_expired_at(v) -> str:
+        """到期日统一为 YYYY-MM-DD（Komari 用 new Date() 解析）。"""
+        s = str(v or "").strip()
+        if not s:
+            return ""
+        # 兼容 2026.10.18 / 2026/10/18
+        m = re.match(r"^(\d{4})[./](\d{1,2})[./](\d{1,2})$", s)
+        if m:
+            return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+        return s
+
     def rpc_common_get_nodes(params):
         """common:getNodes — Komari 兼容格式：返回以 uuid 为键的字典。
 
         BigCat 自带主题调用后会做 Object.values() 转列表，
         第三方 Komari 主题（如 Emerald）直接按字典消费。
+        另做 Komari 兼容归一化：billing_cycle 转天数、expired_at 转 ISO。
         """
         params = params or {}
         uuid = params.get("uuid") or ""
@@ -1439,6 +1486,9 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
             if c.get("hidden"):
                 continue
             node = _public_node(c)
+            # Komari 兼容归一化
+            node["billing_cycle"] = _komari_billing_days(node.get("billing_cycle"))
+            node["expired_at"] = _komari_expired_at(node.get("expired_at"))
             out[node["uuid"]] = node
         if uuid:
             if uuid not in out:
