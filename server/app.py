@@ -3186,6 +3186,11 @@ def create_app(db_path: str = "data/bigcat.db", static_dir: str = STATIC_DIR,
         for k in ("threshold", "ratio", "interval_min", "enabled"):
             if k in data:
                 fields[k] = data[k]
+        if "clients" in data:
+            clients = data.get("clients") or []
+            if not isinstance(clients, list):
+                clients = []
+            fields["clients"] = json.dumps([str(x) for x in clients])
         store.update_alert_rule(rule_id, fields)
         return jsonify({"ok": True})
 
