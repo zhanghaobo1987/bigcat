@@ -1537,10 +1537,16 @@ function expiryBadge(days) {
   return `<span class="badge on">${days} 天</span>`;
 }
 async function loadNodes() {
-  const {data: clients, status} = await api('/api/admin/clients');
-  if (status === 401) return needLogin();
-  nodesCache = clients;
   const tb = $('nodes-body');
+  let clients, status;
+  try {
+    ({data: clients, status} = await api('/api/admin/clients'));
+  } catch(e) {
+    tb.innerHTML = '<tr><td colspan="8" class="muted">加载失败：网络错误，点击左侧菜单重新进入</td></tr>';
+    return;
+  }
+  if (status === 401) return needLogin();
+  nodesCache = clients || [];
   if (!clients.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">暂无节点，点击下方添加。</td></tr>'; return; }
   tb.innerHTML = clients.map(c => {
     const masked = '••••••••' + String(c.token || '').slice(-6);
