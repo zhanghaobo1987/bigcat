@@ -1837,13 +1837,14 @@ function nodeChecksHTML(nodes, selected, labelFn) {
 }
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.matches('[data-sel-all]')) {
+  if (t.matches && t.matches('[data-sel-all]')) {
     const box = t.closest('.checklist, .chk-list');
     if (box) box.querySelectorAll('input[type=checkbox]:not([data-sel-all])').forEach(c => c.checked = t.checked);
     return;
   }
-  if (t.matches('.checklist input[type=checkbox], .chk-list input[type=checkbox]')) {
+  if (t.matches && t.matches('.checklist input[type=checkbox], .chk-list input[type=checkbox]')) {
     const box = t.closest('.checklist, .chk-list');
+    if (!box) return;
     const all = [...box.querySelectorAll('input[type=checkbox]:not([data-sel-all])')];
     const selAll = box.querySelector('[data-sel-all]');
     if (selAll && all.length) {
@@ -1976,9 +1977,24 @@ async function loadAlerts() {
 }
 LOADERS.alerts = loadAlerts;
 function alertNodeChecks(selected) {
-  $('alert-nodes').innerHTML = nodesCache.length
-    ? nodeChecksHTML(nodesCache, selected, c => esc(c.name || c.uuid.slice(0, 8)))
-    : '<span class="muted">暂无节点（将应用于全部节点）</span>';
+  const box = $('alert-nodes');
+  if (!nodesCache.length) {
+    box.innerHTML = '<span class="muted">暂无节点（将应用于全部节点）</span>';
+    return;
+  }
+  box.innerHTML = nodeChecksHTML(nodesCache, selected, c => esc(c.name || c.uuid.slice(0, 8)));
+  // 直接绑定事件，不依赖全局 change 监听（更可靠）
+  const selAll = box.querySelector('[data-sel-all]');
+  const items = [...box.querySelectorAll('input[type=checkbox]:not([data-sel-all])')];
+  if (selAll) {
+    selAll.onchange = () => items.forEach(c => c.checked = selAll.checked);
+  }
+  items.forEach(c => c.onchange = () => {
+    if (!selAll) return;
+    const n = items.filter(x => x.checked).length;
+    selAll.checked = n === items.length;
+    selAll.indeterminate = n > 0 && n < items.length;
+  });
 }
 $('btn-add-alert').onclick = async () => {
   $('alert-modal-title').textContent = '新增告警规则';
@@ -2002,6 +2018,7 @@ window.openAlertEdit = async id => {
   $('modal-alert').classList.remove('hidden');
 };
 $('btn-alert-cancel').onclick = closeModals;
+$('btn-alert-cancel').addEventListener('click', closeModals);
 $('btn-alert-save').onclick = async () => {
   const id = $('alert-id').value;
   const clients = [...document.querySelectorAll('#alert-nodes input:checked:not([data-sel-all])')].map(x => x.value);
